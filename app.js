@@ -63,7 +63,8 @@ function fresh(d) {
     v: STATE_VERSION, created: t, profile: { name: (d.name || '').trim() }, profileDone: true,
     settings: { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme, palette: d.palette, perks: {}, remind: {} },
     bosses: (d.bosses || []).map(b => makeBoss(b, t)),
-    quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
+    quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t, fromTs: Date.now() }], auto: null, check: null }])),
+    createdTs: Date.now(),
     days: {}, side: {}, sideList: d.side || [], custom: d.custom || [], events: [], guide: true,
     seenVersion: APP_VERSION, lastBackup: t, sleep: { enabled: d.sleep === true, checkin: d.sleep === true, shift: null },
     shop: { rewards: d.rewards || [], bought: [] },
@@ -157,7 +158,22 @@ function countDone(id, endK, n) {
   for (let i = 0; i < n; i++) { const k = addDays(endK, -i); if (k < S.created) break; if (doneOn(id, k)) c++; }
   return c;
 }
-function activate(id, k) { const r = S.quests[id] ||= { periods: [], auto: null, check: null }; r.periods.push({ from: k }); r.auto = null; }
+function activate(id, k) { const r = S.quests[id] ||= { periods: [], auto: null, check: null }; r.periods.push({ from: k, fromTs: Date.now() }); r.auto = null; }
+/* Конец окна квеста в день k, в миллисекундах */
+function windowEndTs(q, k) {
+  const [y, m, d] = k.split('-').map(Number), base = new Date(y, m - 1, d, DAY_SHIFT_H, 0).getTime();
+  let T = q.to ? shMin(q.to) : 1440; if (T === 0) T = 1440;
+  return base + T * 60e3;
+}
+/* Считается ли квест в день k: он активен, и его окно не закрылось раньше, чем квест взяли.
+   Так квест, взятый вечером, не засчитывается в провал за утро того же дня. */
+function countsOn(q, k) {
+  const r = S.quests[q.id]; if (!r) return false;
+  const p = r.periods.find(p => p.from <= k && (!p.to || k <= p.to)); if (!p) return false;
+  if (p.from === k && p.fromTs && windowEndTs(q, k) < p.fromTs) return false;
+  return true;
+}
+const lateToday = (q, k) => activeOn(q.id, k) && !countsOn(q, k);
 function deactivate(id, k) {
   const r = S.quests[id]; if (!r) return;
   const last = r.periods[r.periods.length - 1];
@@ -221,6 +237,7 @@ function streakInfo() {
   const t = todayKey(); let streak = 0, best = 0; const shieldDays = new Set(); const used = {};
   for (let k = S.created; k < t; k = addDays(k, 1)) {
     if (anyDone(k)) streak++;
+    else if (k === S.created) continue;          // день старта без отметок — не пропуск
     else {
       const w = weekOf(k); used[w] = used[w] || 0;
       if (used[w] < SHIELDS_PER_WEEK) { used[w]++; shieldDays.add(k); } else streak = Math.floor(streak / 2);
@@ -262,15 +279,19 @@ function ensureCard(t) {
 function ensureWeek(w) {
   if (S.weeks[w]) return S.weeks[w];
   const prev = S.weeks[addDays(w, -7)];
-  const pool = CHALLENGES.filter(c => !prev || c.id !== prev.ch);
-  S.weeks[w] = { ch: rnd(pool).id, marks: [], stake: 0 };
+  const t = todayKey(), left = Math.min(7, daysBetween(t > w ? t : w, addDays(w, 6)) + 1);
+  let pool = CHALLENGES.filter(c => (!prev || c.id !== prev.ch) && c.n <= left);
+  if (!pool.length) pool = CHALLENGES.filter(c => !prev || c.id !== prev.ch);
+  const ch = rnd(pool);
+  // неделя началась не с понедельника — цель вызова уменьшается пропорционально
+  S.weeks[w] = { ch: ch.id, marks: [], stake: 0, n: left < 7 ? Math.max(1, Math.min(ch.n, Math.round(ch.n * left / 7))) : ch.n };
   return S.weeks[w];
 }
 function challengeResult(w) {
   const wk = S.weeks[w]; if (!wk) return null;
-  const c = CH[wk.ch]; const done = wk.marks.length >= c.n;
+  const c = CH[wk.ch], n = wk.n || c.n; const done = wk.marks.length >= n;
   const over = addDays(w, 6) < todayKey();
-  return { c, wk, done, over, lost: over && !done && wk.stake > 0 };
+  return { c, n, wk, done, over, lost: over && !done && wk.stake > 0 };
 }
 
 /* ================= монеты, опыт ================= */
@@ -368,7 +389,7 @@ function weekScore(w) {
   const perQuest = {};
   for (const k of keys) {
     const d = peekDay(k);
-    const act = CATALOG.filter(q => activeOn(q.id, k));
+    const act = CATALOG.filter(q => countsOn(q, k));
     const done = anyDone(k), shield = shieldDays.has(k);
     if (done || shield) stable++;
     for (const q of act) { if (k === t && !d.q[q.id]) continue; perQuest[q.id] ||= { done: 0, days: 0 }; perQuest[q.id].days++; if (d.q[q.id]) perQuest[q.id].done++; }
@@ -377,6 +398,9 @@ function weekScore(w) {
     if (shield || !act.length || (k === t && !done)) continue;
     qDays++; qSum += act.reduce((s, q) => s + (d.q[q.id]?.v || 0), 0) / act.length;
   }
+  // сегодня без отметок и первый день без отметок не тянут стабильность вниз
+  const skipStart = keys.includes(S.created) && !anyDone(S.created) && S.created !== t;
+  if (skipStart) stable++;
   const denom = keys.length - (keys.includes(t) && !anyDone(t) ? 1 : 0);
   const quests = qDays ? qSum / qDays * 60 : (stable ? 60 : 0);
   const stability = denom ? stable / denom * 20 : 20;
@@ -490,7 +514,12 @@ function bossScore(w) {
   const end = addDays(w, 6);
   const list = S.bosses.filter(b => b.created <= end && (!b.defeated || b.defeated >= w));
   if (!list.length) return 10;
-  return list.reduce((s, b) => { const p = bossWeek(b, w); return s + (b.weekly > 0 ? Math.min(1, Math.max(0, p / b.weekly)) : (p > 0 ? 1 : 0)); }, 0) / list.length * 10;
+  return list.reduce((s, b) => {
+    // босс появился посреди недели — цель недели пропорционально оставшимся дням
+    const st = [w, b.created, S.created].sort().pop(), days = Math.min(7, daysBetween(st, end) + 1);
+    const goal = b.weekly * days / 7, p = bossWeek(b, w);
+    return s + (goal > 0 ? Math.min(1, Math.max(0, p / goal)) : (p > 0 ? 1 : 0));
+  }, 0) / list.length * 10;
 }
 function checkBossKill(b, t) {
   if (!b.defeated && bossState(b).hp <= 0) { b.defeated = t; S.events.push({ day: t, type: 'bosskill', id: b.id }); return true; }
@@ -796,7 +825,7 @@ function questCard(q, t) {
   }
   else if (done) sub = `Готово${gain}${proofTag}`;
   if (!done && q.kind === 'timer' && S.timers[q.id]) extra = timerBlock(q.id, q.mins);
-  if (!done && !win.open) sub = win.why;
+  if (!done && !win.open) sub = lateToday(q, t) ? 'Взят после окна: сегодня не считается, начнём завтра' : win.why;
   else if (!done && win.note && q.kind !== 'wake') sub += ` · ${win.note}`;
   if (!done && q.kind === 'wake' && win.open) extra = `<div class="q-extra"><button class="linkbtn" data-a="time-sheet" data-id="wake">Встал раньше, указать время</button></div>`;
   if (!done && q.kind === 'bed' && win.open && !nosleepFor(t)) extra = `<div class="q-extra"><button class="linkbtn" data-a="time-sheet" data-id="bed">Уже лёг, указать время</button></div>`;
@@ -836,7 +865,7 @@ function cardOfDay(t) {
 function challengeCard(t) {
   const w = weekOf(t), wk = ensureWeek(w), c = CH[wk.ch], r = challengeResult(w);
   const today = wk.marks.some(m => m.day === t);
-  const pct = Math.min(100, wk.marks.length / c.n * 100);
+  const n = r.n, pct = Math.min(100, wk.marks.length / n * 100);
   const bal = coins();
   let actions = '';
   if (r.done) actions = `<span class="badge gold">Вызов выполнен · +150 опыта, +${100 + wk.stake * 2} монет</span>`;
@@ -851,7 +880,7 @@ function challengeCard(t) {
     <div class="section-head"><span class="label">Вызов недели</span><span class="muted small">до воскресенья</span></div>
     <h2>${esc(c.title)}</h2>
     <div class="bar ch-bar"><i style="width:${pct}%"></i></div>
-    <div class="row" style="justify-content:space-between"><span class="mono">${Math.min(wk.marks.length, c.n)}/${c.n}</span>${actions}</div>
+    <div class="row" style="justify-content:space-between"><span class="mono">${Math.min(wk.marks.length, n)}/${n}</span>${actions}</div>${n < c.n ? `<span class="muted small">Неделя неполная, цель уменьшена с ${c.n} до ${n}</span>` : ''}
     ${stake}
   </section>`;
 }
@@ -915,7 +944,7 @@ function viewToday() {
   if (daysBetween(S.lastBackup || S.created, t) >= 7) html += `<section class="card hl"><span class="label">Раз в неделю</span><h2>Сохрани резервную копию</h2>
     <p class="muted small">Данные живут только на этом телефоне. Копия займёт 10 секунд.</p><div class="row"><button class="btn sm" data-a="export">Сохранить копию</button><button class="linkbtn" data-a="backup-later">Напомни завтра</button></div></section>`;
   const lastCh = challengeResult(prevW);
-  if (lastCh && lastCh.lost && !S.weeks[prevW].seenLoss) html += `<section class="card warnc"><span class="label">Ставка сгорела</span><p>Вызов «${esc(lastCh.c.title)}» не добит: ${lastCh.wk.marks.length}/${lastCh.c.n}. Минус ${lastCh.wk.stake} монет.</p><button class="linkbtn" data-a="seen-loss" data-w="${prevW}" style="align-self:flex-start">Понял</button></section>`;
+  if (lastCh && lastCh.lost && !S.weeks[prevW].seenLoss) html += `<section class="card warnc"><span class="label">Ставка сгорела</span><p>Вызов «${esc(lastCh.c.title)}» не добит: ${lastCh.wk.marks.length}/${lastCh.n}. Минус ${lastCh.wk.stake} монет.</p><button class="linkbtn" data-a="seen-loss" data-w="${prevW}" style="align-self:flex-start">Понял</button></section>`;
 
   if (y >= S.created && !anyDone(y) && !peekDay(y).noted) {
     const d = peekDay(y), tags = d.tags || [];
@@ -932,6 +961,7 @@ function viewToday() {
         <div class="row"><button class="btn sm" data-a="auto-yes" data-id="${q.id}">Да, держится</button><button class="btn sm ghost" data-a="auto-no" data-id="${q.id}">Нет, верни в список</button></div></section>`;
   }
 
+  if (t === S.created && active.some(q => lateToday(q, t))) html += `<section class="card hl"><span class="label">Первый день</span><p class="small">Квесты, чьё окно сегодня уже прошло, начнут считаться с завтрашнего дня. Пропуском это не будет.</p></section>`;
   html += sleepCard(t);
   html += cardOfDay(t);
 
@@ -939,7 +969,7 @@ function viewToday() {
   html += `<section class="section"><div class="section-head"><h2>Квесты дня</h2><span class="muted mono small">${doneN}/${active.length}</span></div>
     <div class="quests">${active.length ? active.map(q => questCard(q, t)).join('') : '<div class="empty">Активных квестов нет. Возьми в каталоге на вкладке «Квесты».</div>'}</div>`;
   const fixesLeft = FIXES_PER_WEEK - (S.fixes[weekOf(t)] || 0);
-  const missedY = y >= S.created ? active.filter(q => activeOn(q.id, y) && !doneOn(q.id, y) && q.kind !== 'smoke') : [];
+  const missedY = y >= S.created ? active.filter(q => countsOn(q, y) && !doneOn(q.id, y) && q.kind !== 'smoke') : [];
   if (missedY.length && fixesLeft > 0) html += `<button class="linkbtn" data-a="fix-sheet">Забыл отметить вчера? Исправлений на неделе: ${fixesLeft}</button>`;
   html += `</section>`;
 
@@ -1076,6 +1106,7 @@ function viewWeek() {
   const prev = addDays(w, -7) >= weekOf(S.created) ? weekScore(addDays(w, -7)) : null;
   const delta = prev ? sc.total - prev.total : null;
   const C = 2 * Math.PI * 54;
+  if (w === weekOf(S.created) && S.created !== w) html += `<p class="muted small">Первая неделя неполная: оценка считается с ${WD_FULL[wdIndex(S.created)].replace('среда', 'среды').replace('пятница', 'пятницы').replace('суббота', 'субботы').replace('воскресенье', 'воскресенья').replace('вторник', 'вторника').replace('четверг', 'четверга')}, дни до старта не учитываются.</p>`;
   html += `<section class="card">
     <div class="score">
       <div class="ring"><svg viewBox="0 0 132 132"><circle class="trk" cx="66" cy="66" r="54"/><circle class="val" cx="66" cy="66" r="54" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - sc.total / 100)}"/></svg>
@@ -1098,7 +1129,7 @@ function viewWeek() {
   const shown = CATALOG.filter(q => sc.perQuest[q.id]);
   if (shown.length) {
     html += `<section class="card"><h2>По дням</h2><div class="xscroll"><div class="grid7"><span></span>${WD.map(d => `<span class="h">${d}</span>`).join('')}`;
-    const rows = shown.map(q => [q.title, q.stat, k => { const r = peekDay(k).q[q.id]; return !activeOn(q.id, k) ? 'off' : r ? (r.v >= 1 ? 'full' : 'half') : ''; }]);
+    const rows = shown.map(q => [q.title, q.stat, k => { const r = peekDay(k).q[q.id]; return r ? (r.v >= 1 ? 'full' : 'half') : !countsOn(q, k) ? 'off' : ''; }]);
     rows.push(['Карта дня', 'mind', k => peekDay(k).card?.done ? (peekDay(k).card.done.v >= 1 ? 'full' : 'half') : '']);
     for (const [name, stat, f] of rows) {
       html += `<span class="nm">${esc(name)}</span>`;
@@ -1145,7 +1176,7 @@ function summaryLines(w, sc) {
   }
   if (sc.cards) out.push(`Карт дня выполнено: ${sc.cards}.`);
   const ch = challengeResult(w);
-  if (ch) out.push(`Вызов «${ch.c.title}»: ${ch.wk.marks.length}/${ch.c.n}${ch.done ? ', выполнен' : ch.over ? ', не добит' : ''}${ch.wk.stake ? `, ставка ${ch.wk.stake}` : ''}.`);
+  if (ch) out.push(`Вызов «${ch.c.title}»: ${ch.wk.marks.length}/${ch.n}${ch.done ? ', выполнен' : ch.over ? ', не добит' : ''}${ch.wk.stake ? `, ставка ${ch.wk.stake}` : ''}.`);
   for (const b of S.bosses.filter(b => b.created <= addDays(w, 6) && (!b.defeated || b.defeated >= w))) {
     const T = BT[b.type], p = bossWeek(b, w), st = bossState(b);
     if (b.defeated && b.defeated <= addDays(w, 6)) { out.push(`${b.name}: побеждён ${fmtDay(b.defeated)}.${roast ? ' Легенда.' : ''}`); continue; }
@@ -1184,7 +1215,7 @@ function viewReport() {
   // Модули отчёта: показываем только то, чем человек пользуется, и сортируем по тому, насколько активно
   const mods = [
     { id: 'habits', name: 'квесты', use: questMarks, show: ever.length > 0, html: () => `<section class="card"><h2>Привычки</h2><div class="parts">${ever.map(q => {
-        let days = 0, d = 0; for (const k of allKeys) if (activeOn(q.id, k) && k < t) { days++; if (doneOn(q.id, k)) d++; }
+        let days = 0, d = 0; for (const k of allKeys) if (countsOn(q, k) && k < t) { days++; if (doneOn(q.id, k)) d++; }
         const pct = days ? Math.round(d / days * 100) : 0;
         return `<div class="part" data-stat="${q.stat}"><span>${esc(q.title)}${qStatus(q.id) === 'auto' ? ' ★' : ''}</span><span class="mono">${d}/${days} · ${pct}%</span><div class="bar stat-bar"><i style="width:${pct}%"></i></div></div>`;
       }).join('')}</div><p class="muted small">Сегодняшний день не считается, пока не закончился.</p></section>` },
@@ -1417,7 +1448,7 @@ function viewSheet() {
     <button class="btn" data-a="time-save" data-id="${q.id}">Сохранить</button>`); }
   if (sh.type === 'fix') {
     const y = addDays(t, -1);
-    const list = activeQuests().filter(q => activeOn(q.id, y) && !doneOn(q.id, y) && q.kind !== 'smoke');
+    const list = activeQuests().filter(q => countsOn(q, y) && !doneOn(q.id, y) && q.kind !== 'smoke');
     return sheetWrap('Исправление', `<h2>Отметить за вчера</h2><p class="muted small">Одно исправление в неделю. Засчитается вполсилы и без монет. Выбери один квест.</p>
       ${list.map(q => `<button class="btn ghost" data-a="fix" data-id="${q.id}">${esc(q.title)}</button>`).join('')}
       `);
@@ -1560,7 +1591,7 @@ async function drawShare(w) {
     x.fillStyle = mut; x.font = `500 32px ${B}`; x.fillText(l, tx + 34, ty + 175);
   });
   const ch = challengeResult(w);
-  if (ch) { x.fillStyle = ch.done ? gold : mut; x.font = `600 32px ${B}`; x.fillText(`Вызов недели: ${ch.done ? 'выполнен' : `${ch.wk.marks.length}/${ch.c.n}`}`, 90, 1110); }
+  if (ch) { x.fillStyle = ch.done ? gold : mut; x.font = `600 32px ${B}`; x.fillText(`Вызов недели: ${ch.done ? 'выполнен' : `${ch.wk.marks.length}/${ch.n}`}`, 90, 1110); }
   x.fillStyle = gold; roundRect(x, 90, 1210, 64, 64, 18); x.fill();
   x.strokeStyle = ink; x.lineWidth = 7; x.lineJoin = 'round'; x.beginPath(); x.moveTo(104, 1258); x.lineTo(114, 1258); x.lineTo(114, 1246); x.lineTo(124, 1246); x.lineTo(124, 1234); x.lineTo(134, 1234); x.lineTo(134, 1224); x.lineTo(142, 1224); x.stroke();
   x.fillStyle = fg; x.font = `700 36px ${D}`; x.fillText('Точка сохранения', 176, 1254);
