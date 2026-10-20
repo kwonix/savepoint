@@ -1015,6 +1015,10 @@ function bossCard(b, full) {
   if (T.mode === 'sum') {
     info = `${fmtN(st.dealt, b.unit)} из ${fmtN(b.total, b.unit)}`;
     week = `За неделю: ${fmtN(wk, b.unit)}${b.weekly ? ' из ' + fmtN(b.weekly, b.unit) : ''}`;
+    if (T.stat === 'money' && qStatus('nospend') === 'active') {
+      const w0 = weekOf(t); let n = 0; for (let i = 0; i < 7; i++) if (doneOn('nospend', addDays(w0, i))) n++;
+      if (n) week += ` · дней без лишних трат: ${n} — хороший повод внести${b.weekly && wk < b.weekly ? ' до цели' : ' чуть больше'}`;
+    }
     controls = `<div class="row"><input class="grow" id="bh-${b.id}" type="number" inputmode="decimal" min="0" step="${T.step || 1}" placeholder="${esc(T.hitLabel)}" aria-label="${esc(T.hitLabel)}"><button class="btn sm" data-a="boss-hit" data-id="${b.id}">${esc(T.hitBtn)}</button></div>`;
   } else if (T.mode === 'measure') {
     info = `Сейчас ${fmtN(st.cur, b.unit)} → цель ${fmtN(b.target, b.unit)}`;
@@ -1905,6 +1909,8 @@ document.addEventListener('click', async e => {
       if (!(v > 0)) { toast('Введи число больше нуля'); return; }
       if (T.mode === 'sum') b.hits.push({ day: t, amount: v, ts: Date.now() });
       else { b.hits = b.hits.filter(h => h.day !== t); b.hits.push({ day: t, value: v, ts: Date.now() }); }
+      // взвесился в боссе «Вес» — разовое дело «Взвеситься» закрывается само
+      if (b.type === 'weight' && (S.sideList || []).includes('weigh') && !(S.side.weigh || []).length) { S.side.weigh = [t]; setTimeout(() => toast('Разовое дело «Взвеситься» закрыто автоматически', true), 900); }
       const won = checkBossKill(b, t); afterChange(px, pc);
       if (won) setTimeout(() => toast(`Босс «${b.name}» побеждён! +500 опыта`, true), 1200);
       return;
