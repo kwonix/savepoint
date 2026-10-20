@@ -1424,7 +1424,9 @@ function sleepSettings() {
       const a = addDays(sl.shift.start, (st - 1) * sl.shift.every), b = addDays(a, sl.shift.every - 1), x = sleepTargets(a);
       rows.push(`<div class="kv${st === tg.stage ? ' now' : ''}"><span>${fmtDay(a)}${b !== a ? '–' + fmtDay(b) : ''}</span><span class="mono">${x.bed} → ${x.wake}</span></div>`);
     }
-    h += `<div class="label">План: отбой → будильник</div><div class="plan">${rows.join('')}</div>`;
+    const cur = rows[tg.stage - 1];
+    h += `<div class="label">План: отбой → будильник</div><div class="plan">${ui.planOpen ? rows.join('') : cur}</div>
+      <button class="linkbtn" data-a="plan-toggle" style="align-self:flex-start">${ui.planOpen ? 'Свернуть' : `Показать весь план · ${plan.stages} ${plural(plan.stages, 'этап', 'этапа', 'этапов')}`}</button>`;
   }
   h += `<p class="muted small">Будильник ставь в «Часах» на время подъёма. На главном экране в карточке сна всегда написано, на сколько его ставить сегодня.</p></section>`;
   return h;
@@ -1904,6 +1906,7 @@ document.addEventListener('click', async e => {
       S.sleep.enabled = true; S.sleep.shift = { fromBed: fb, fromWake: fw, step: sh.step, every: sh.every, start: t };
       const plan = shiftPlan(); ui.sheet = null; save(); render(); toast(`План готов: ${plan.stages} ${plural(plan.stages, 'этап', 'этапа', 'этапов')}, финиш ${fmtDay(plan.end)}`, true); return;
     }
+    case 'plan-toggle': ui.planOpen = !ui.planOpen; render(); return;
     case 'shift-stop': S.sleep.shift = null; save(); render(); toast('Переход остановлен, цели — твой желаемый режим'); return;
 
     case 'sprint-keep': {
