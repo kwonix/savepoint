@@ -483,8 +483,6 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .card.wb input, .card.wb select { background: var(--surface); }
 .wiz .chips { gap: 6px; }
 .wiz .cat-head { padding-top: 6px; }
-.wiz-nav { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); padding-top: 6px; }
-.wiz-nav .btn { box-shadow: var(--shadow); }
 .wiz .side { padding: 10px 0; }
 @media (max-width: 360px) { .btypes { grid-template-columns: 1fr; } }
 
@@ -500,3 +498,17 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .btn.danger-fill { background: var(--danger); color: #fff; }
 .xbtn { width: 32px; height: 32px; flex: none; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--muted); font-size: 1.1rem; line-height: 1; }
 .row.nowrap { flex-wrap: nowrap; }
+
+/* ================= многостраничные экраны ================= */
+.pager { padding-bottom: 24px; }
+.pager-nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  background: linear-gradient(to top, var(--bg) 70%, color-mix(in srgb, var(--bg) 0%, transparent));
+  padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.pager-in { max-width: 540px; margin: 0 auto; display: grid; grid-template-columns: 112px 1fr; gap: 10px; }
+.pager-in > span:empty { display: block; }
+.in-next { animation: inNext .28s ease both; }
+.in-back { animation: inBack .28s ease both; }
+@keyframes inNext { from { transform: translateX(36px); opacity: 0; } }
+@keyframes inBack { from { transform: translateX(-36px); opacity: 0; } }

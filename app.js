@@ -545,14 +545,34 @@ const GUIDE = [
 ];
 function viewGuide(step, final) {
   const g = GUIDE[step];
-  return `<section class="guide">
+  return pagerNav(`<section class="guide pager" data-next="guide-next" data-back="${step > 0 ? 'guide-back' : ''}">
     <div class="dots">${GUIDE.map((_, i) => `<i class="${i === step ? 'on' : ''}"></i>`).join('')}</div>
     <span class="label">${g.eyebrow}</span>
     <h1>${g.title}</h1>
     ${g.body}
-    <div class="row">${step > 0 ? '<button class="btn ghost" data-a="guide-back">Назад</button>' : ''}
-      <button class="btn grow" data-a="guide-next">${step < GUIDE.length - 1 ? 'Дальше' : final}</button></div>
-  </section>`;
+  </section>`, step > 0 ? '<button class="btn ghost" data-a="guide-back">Назад</button>' : '<span></span>',
+    `<button class="btn" data-a="guide-next">${step < GUIDE.length - 1 ? 'Дальше' : final}</button>`);
+}
+
+/* Многостраничные экраны: кнопки всегда в одном месте внизу, листание свайпом */
+function pagerNav(content, left, right) {
+  return `${content}<nav class="pager-nav"><div class="pager-in">${left}${right}</div></nav>`;
+}
+let swipe = null;
+document.addEventListener('touchstart', e => {
+  const pg = e.target.closest('.pager'); if (!pg || e.target.closest('input, textarea, select')) { swipe = null; return; }
+  swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, pg };
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (!swipe) return;
+  const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y, pg = swipe.pg; swipe = null;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  const act = dx < 0 ? pg.dataset.next : pg.dataset.back; if (!act) return;
+  document.querySelector(`.pager-nav [data-a="${act}"]`)?.click();
+});
+function animatePager() {
+  const pg = document.querySelector('.pager'); if (!pg || !ui.slide) return;
+  pg.classList.add(ui.slide === 'back' ? 'in-back' : 'in-next'); ui.slide = null;
 }
 
 /* ================= экраны ================= */
@@ -624,11 +644,10 @@ function viewWizard() {
          <li><b>Резервная копия.</b> Раз в неделю приложение напомнит её сохранить.</li>
          <li><b>Всё это можно поменять</b> потом: Профиль → «Изменить анкету».</li></ul>`;
   }
-  return `<section class="guide wiz">${body}
-    <div class="row wiz-nav">${w.step > 0 ? '<button class="btn ghost" data-a="wz-back">Назад</button>' : (w.mode === 'edit' ? '<button class="btn ghost" data-a="wz-cancel">Отмена</button>' : '')}
-      <button class="btn grow" data-a="wz-next">${last ? (w.mode === 'new' ? 'Начать игру' : 'Сохранить') : step === 'bosses' && !d.bosses.length && !d.keep.length ? 'Пропустить' : 'Дальше'}</button></div>
-    ${w.mode === 'new' && w.step === 0 ? '<button class="linkbtn" data-a="open-import">Восстановить из резервной копии</button>' : ''}
-  </section>`;
+  return pagerNav(`<section class="guide wiz pager" data-next="wz-next" data-back="${w.step > 0 ? 'wz-back' : ''}">${body}
+    ${w.mode === 'new' && w.step === 0 ? '<button class="linkbtn" data-a="open-import" style="align-self:flex-start">Восстановить из резервной копии</button>' : ''}
+  </section>`, w.step > 0 ? '<button class="btn ghost" data-a="wz-back">Назад</button>' : (w.mode === 'edit' ? '<button class="btn ghost" data-a="wz-cancel">Отмена</button>' : '<span></span>'),
+    `<button class="btn" data-a="wz-next">${last ? (w.mode === 'new' ? 'Начать игру' : 'Сохранить') : step === 'bosses' && !d.bosses.length && !d.keep.length ? 'Пропустить' : 'Дальше'}</button>`);
 }
 const qStatusSafe = id => S ? qStatus(id) : 'off';
 function wizApply() {
@@ -1256,9 +1275,9 @@ function render() {
   applyTheme();
   const root = document.getElementById('app');
   const tabbar = document.getElementById('tabbar');
-  if (ui.guide !== null && ui.guide < GUIDE.length) { root.innerHTML = viewGuide(ui.guide, S ? 'Понял' : 'Понял, к анкете'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = S ? '' : viewSheet(); syncLock(); return; }
+  if (ui.guide !== null && ui.guide < GUIDE.length) { root.innerHTML = viewGuide(ui.guide, S ? 'Понял' : 'Понял, к анкете'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = S ? '' : viewSheet(); syncLock(); animatePager(); return; }
   if (!S && !ui.wiz) ui.wiz = newWiz();
-  if (ui.wiz) { root.innerHTML = viewWizard(); tabbar.hidden = true; document.getElementById('sheet').innerHTML = viewSheet(); syncLock(); return; }
+  if (ui.wiz) { root.innerHTML = viewWizard(); tabbar.hidden = true; document.getElementById('sheet').innerHTML = viewSheet(); syncLock(); animatePager(); return; }
   tabbar.hidden = false;
   root.innerHTML = ui.tab === 'quests' ? viewQuests() : ui.tab === 'week' ? viewWeek() : ui.tab === 'report' ? viewReport() : ui.tab === 'me' ? viewMe() : viewToday();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === ui.tab));
@@ -1418,12 +1437,12 @@ document.addEventListener('click', async e => {
   if (a === 'open-import') { ui.sheet = { type: 'import' }; render(); return; }
   if (a === 'import') return doImport();
   if (a === 'guide-next') {
-    ui.guide = (ui.guide ?? 0) + 1;
+    ui.slide = 'next'; ui.guide = (ui.guide ?? 0) + 1;
     if (ui.guide >= GUIDE.length) { ui.guide = null; if (S) { S.guide = true; save(); } else ui.wiz = newWiz(); }
     window.scrollTo(0, 0); render(); return;
   }
   if (a.startsWith('wz-') && ui.wiz) { wizAction(a, el); return; }
-  if (a === 'guide-back') { ui.guide = Math.max(0, (ui.guide ?? 0) - 1); window.scrollTo(0, 0); render(); return; }
+  if (a === 'guide-back') { ui.slide = 'back'; ui.guide = Math.max(0, (ui.guide ?? 0) - 1); window.scrollTo(0, 0); render(); return; }
   if (!S) return;
   const t = todayKey(), px = xpAll().total, pc = coins();
 
@@ -1653,8 +1672,8 @@ function wizAction(a, el) {
   const w = ui.wiz, d = w.d;
   const re = () => render();
   switch (a) {
-    case 'wz-next': { const err = wizProblem(); if (err) { toast(err); return; } if (w.step === WIZ.length - 1) { wizApply(); return; } w.step++; window.scrollTo(0, 0); return re(); }
-    case 'wz-back': w.step = Math.max(0, w.step - 1); window.scrollTo(0, 0); return re();
+    case 'wz-next': { const err = wizProblem(); if (err) { toast(err); return; } if (w.step === WIZ.length - 1) { wizApply(); return; } w.step++; ui.slide = 'next'; window.scrollTo(0, 0); return re(); }
+    case 'wz-back': ui.slide = 'back'; w.step = Math.max(0, w.step - 1); window.scrollTo(0, 0); return re();
     case 'wz-cancel': ui.wiz = null; if (S && !S.profileDone) { S.profileDone = true; save(); } return re();
     case 'wz-q': { const id = el.dataset.id; if (d.quests.includes(id)) d.quests = d.quests.filter(x => x !== id); else { if (d.quests.length >= wizQuestLimit()) { toast(`Максимум ${wizQuestLimit()}. Сними другой квест`); return; } d.quests.push(id); } return re(); }
     case 'wz-keep': { const id = el.dataset.id; d.keep = d.keep.includes(id) ? d.keep.filter(x => x !== id) : d.keep.concat(id); return re(); }
