@@ -250,12 +250,30 @@ function streakInfo() {
 }
 
 /* ================= карта дня ================= */
+/* Самая слабая характеристика за 2 недели: по числу выполненных квестов, карт и ударов по боссам */
+function weakestStat() {
+  const cnt = Object.fromEntries(Object.keys(STATS).map(k => [k, 0])), t = todayKey();
+  for (let i = 0; i < 14; i++) {
+    const d = peekDay(addDays(t, -i));
+    for (const id in d.q) if (Q[id]) cnt[Q[id].stat]++;
+    if (d.card?.done && CARD[d.card.id]) cnt[CARD[d.card.id].stat]++;
+  }
+  for (const b of S.bosses) cnt[b.stat] += b.hits.filter(h => h.day > addDays(t, -14)).length;
+  const min = Math.min(...Object.values(cnt));
+  return rnd(Object.keys(cnt).filter(k => cnt[k] === min));
+}
+const dupOfQuest = c => activeQuests().some(q => QUEST_CARD[q.id]?.test(c.text));
 function drawCard(exclude = []) {
   const roll = Math.random() * 100;
   const rar = roll < RARITY.l.weight ? 'l' : roll < RARITY.l.weight + RARITY.r.weight ? 'r' : 'c';
   const avoid = new Set([...(S.recentCards || []), ...exclude]);
-  let pool = DECK.filter(c => c.rarity === rar && !avoid.has(c.id));
+  // без повторов недавних и без дублей взятых квестов
+  let pool = DECK.filter(c => c.rarity === rar && !avoid.has(c.id) && !dupOfQuest(c));
+  if (!pool.length) pool = DECK.filter(c => c.rarity === rar && !dupOfQuest(c));
   if (!pool.length) pool = DECK.filter(c => c.rarity === rar);
+  // в половине случаев — задание на самую слабую характеристику
+  const weak = weakestStat(), wp = pool.filter(c => c.stat === weak);
+  if (wp.length && Math.random() < .5) pool = wp;
   const c = rnd(pool);
   S.recentCards = [c.id, ...(S.recentCards || [])].slice(0, 25);
   return c.id;
@@ -282,7 +300,10 @@ function ensureWeek(w) {
   const t = todayKey(), left = Math.min(7, daysBetween(t > w ? t : w, addDays(w, 6)) + 1);
   let pool = CHALLENGES.filter(c => (!prev || c.id !== prev.ch) && c.n <= left);
   if (!pool.length) pool = CHALLENGES.filter(c => !prev || c.id !== prev.ch);
-  const ch = rnd(pool);
+  // чаще выпадают вызовы, которые засчитываются по твоим квестам, и вызовы на слабую характеристику
+  const weak = weakestStat(), wgt = c => (c.auto && qStatus(c.auto.q) === 'active' ? 3 : 1) * (c.stat === weak ? 2 : 1);
+  let r = Math.random() * pool.reduce((a, c) => a + wgt(c), 0), ch = pool[0];
+  for (const c of pool) { if ((r -= wgt(c)) <= 0) { ch = c; break; } }
   // неделя началась не с понедельника — цель вызова уменьшается пропорционально
   S.weeks[w] = { ch: ch.id, marks: [], stake: 0, n: left < 7 ? Math.max(1, Math.min(ch.n, Math.round(ch.n * left / 7))) : ch.n };
   return S.weeks[w];
