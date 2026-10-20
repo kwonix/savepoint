@@ -254,25 +254,27 @@ const DECK = DECK_RAW.map(([r, stat, proof, text], i) => ({
   mins: proof && proof[0] === 't' ? Number(proof.slice(1)) : 0,
 }));
 
-/* Вызовы недели: n раз за неделю, не больше одной отметки в день */
+/* Вызовы недели: n раз за неделю, не больше одной отметки в день.
+   auto — если такой квест взят, день засчитывается сам по его отметке:
+   mins — таймер не короче, full — выполнен в срок, photo — с фото */
 const CHALLENGES = [
-  { id: 'w-walk3', title: '3 прогулки по 40 минут', n: 3, stat: 'body' },
-  { id: 'w-food3', title: '3 дня без доставки', n: 3, stat: 'money' },
-  { id: 'w-cook2', title: 'Приготовить еду 2 раза', n: 2, stat: 'body', proof: 'photo' },
-  { id: 'w-bed4', title: '4 отбоя до 01:00', n: 4, stat: 'sleep' },
-  { id: 'w-wake5', title: '5 подъёмов без повтора будильника', n: 5, stat: 'sleep' },
-  { id: 'w-read3', title: 'Читать 3 вечера по 30 минут', n: 3, stat: 'mind' },
+  { id: 'w-walk3', title: '3 прогулки по 40 минут', n: 3, stat: 'body', auto: { q: 'walk', mins: 40 } },
+  { id: 'w-food3', title: '3 дня без доставки', n: 3, stat: 'money', auto: { q: 'food' } },
+  { id: 'w-cook2', title: 'Приготовить еду 2 раза', n: 2, stat: 'body', proof: 'photo', auto: { q: 'cook', photo: true } },
+  { id: 'w-bed4', title: '4 отбоя до 01:00', n: 4, stat: 'sleep', auto: { q: 'bed', full: true } },
+  { id: 'w-wake5', title: '5 подъёмов вовремя', n: 5, stat: 'sleep', auto: { q: 'wake', full: true } },
+  { id: 'w-read3', title: 'Читать 3 вечера по 30 минут', n: 3, stat: 'mind', auto: { q: 'read', mins: 30 } },
   { id: 'w-nogame2', title: '2 дня совсем без игр', n: 2, stat: 'mind' },
   { id: 'w-people2', title: 'Две встречи или прогулки с кем-то', n: 2, stat: 'people' },
   { id: 'w-call3', title: 'Позвонить трём разным людям', n: 3, stat: 'people' },
-  { id: 'w-gym2', title: '2 тренировки: зал, бассейн или турник', n: 2, stat: 'body', proof: 'photo' },
-  { id: 'w-smoke3', title: '3 дня с вредной привычкой ниже лимита', n: 3, stat: 'body' },
-  { id: 'w-nospend4', title: '4 дня без лишних трат', n: 4, stat: 'money' },
-  { id: 'w-study4', title: '4 часа на свой проект за неделю', n: 4, stat: 'mind' },
-  { id: 'w-clean3', title: 'Убраться 3 раза', n: 3, stat: 'mind', proof: 'photo' },
+  { id: 'w-gym2', title: '2 тренировки: зал, бассейн или турник', n: 2, stat: 'body', proof: 'photo', auto: { q: 'gym', photo: true } },
+  { id: 'w-smoke3', title: '3 дня с вредной привычкой ниже лимита', n: 3, stat: 'body', auto: { q: 'smoke', full: true } },
+  { id: 'w-nospend4', title: '4 дня без лишних трат', n: 4, stat: 'money', auto: { q: 'nospend' } },
+  { id: 'w-study4', title: '4 часа на свой проект за неделю', n: 4, stat: 'mind', auto: { q: 'study' } },
+  { id: 'w-clean3', title: 'Убраться 3 раза', n: 3, stat: 'mind', proof: 'photo', auto: { q: 'clean' } },
   { id: 'w-steps3', title: '3 дня по 10 000 шагов', n: 3, stat: 'body' },
-  { id: 'w-phone3', title: '3 вечера без телефона в кровати', n: 3, stat: 'sleep' },
-  { id: 'w-new2', title: 'Попробовать 2 новых продукта', n: 2, stat: 'body', proof: 'photo' },
+  { id: 'w-phone3', title: '3 вечера без телефона в кровати', n: 3, stat: 'sleep', auto: { q: 'noscreen' } },
+  { id: 'w-new2', title: 'Попробовать 2 новых продукта', n: 2, stat: 'body', proof: 'photo', auto: { q: 'newfood', photo: true } },
   { id: 'w-out', title: 'Сходить одному в новое место', n: 1, stat: 'people', proof: 'photo' },
 ];
 

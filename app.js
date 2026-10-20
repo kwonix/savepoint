@@ -287,11 +287,25 @@ function ensureWeek(w) {
   S.weeks[w] = { ch: ch.id, marks: [], stake: 0, n: left < 7 ? Math.max(1, Math.min(ch.n, Math.round(ch.n * left / 7))) : ch.n };
   return S.weeks[w];
 }
+function chAutoDays(c, w) {
+  const A = c.auto; if (!A) return [];
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const k = addDays(w, i), r = peekDay(k).q[A.q]; if (!r) continue;
+    if (A.full && r.v < 1) continue;
+    if (A.photo && r.proof !== 'photo') continue;
+    if (A.mins && (r.mins || Q[A.q]?.mins || 0) < A.mins) continue;
+    out.push(k);
+  }
+  return out;
+}
 function challengeResult(w) {
   const wk = S.weeks[w]; if (!wk) return null;
-  const c = CH[wk.ch], n = wk.n || c.n; const done = wk.marks.length >= n;
+  const c = CH[wk.ch], n = wk.n || c.n;
+  const auto = chAutoDays(c, w), days = new Set([...wk.marks.map(m => m.day), ...auto]);
+  const got = days.size, done = got >= n;
   const over = addDays(w, 6) < todayKey();
-  return { c, n, wk, done, over, lost: over && !done && wk.stake > 0 };
+  return { c, n, wk, got, auto, days, done, over, lost: over && !done && wk.stake > 0 };
 }
 
 /* ================= монеты, опыт ================= */
@@ -883,23 +897,25 @@ function cardOfDay(t) {
 
 function challengeCard(t) {
   const w = weekOf(t), wk = ensureWeek(w), c = CH[wk.ch], r = challengeResult(w);
-  const today = wk.marks.some(m => m.day === t);
-  const n = r.n, pct = Math.min(100, wk.marks.length / n * 100);
+  const today = r.days.has(t);
+  const autoQ = c.auto && qStatus(c.auto.q) === 'active' ? Q[c.auto.q] : null;
+  const n = r.n, pct = Math.min(100, r.got / n * 100);
   const bal = coins();
   let actions = '';
   if (r.done) actions = `<span class="badge gold">Вызов выполнен · +150 опыта, +${100 + wk.stake * 2} монет</span>`;
-  else if (today) actions = `<span class="muted small">Сегодня уже отмечено. Следующая отметка завтра</span>`;
+  else if (today) actions = `<span class="muted small">Сегодня уже засчитано. Следующая отметка завтра</span>`;
+  else if (autoQ) actions = `<span class="muted small">Засчитается сам по квесту «${esc(autoQ.title)}»${c.auto.mins ? `, если таймер не меньше ${c.auto.mins} мин` : c.auto.full ? ', если в срок' : c.auto.photo ? ', если с фото' : ''}</span>`;
   else actions = c.proof === 'photo'
     ? `<button class="btn sm" data-a="proof" data-target="ch">${ICON.cam} +1 с фото</button>`
     : `<button class="btn sm" data-a="ch-plus">+1 сегодня</button>`;
   let stake = '';
   if (wk.stake) stake = `<p class="small">Ставка: <b class="mono">${wk.stake}</b> монет. Сделаешь — вернётся ×2. Нет — сгорит.</p>`;
-  else if (!wk.marks.length && wdIndex(t) <= 2 && !r.done) stake = `<div class="row small"><span class="muted">Поставить монеты:</span>${STAKES.map(s => `<button class="pill" data-a="stake" data-v="${s}" ${bal < s ? 'disabled' : ''}>${s}</button>`).join('')}</div>`;
+  else if (!r.got && wdIndex(t) <= 2 && !r.done) stake = `<div class="row small"><span class="muted">Поставить монеты:</span>${STAKES.map(s => `<button class="pill" data-a="stake" data-v="${s}" ${bal < s ? 'disabled' : ''}>${s}</button>`).join('')}</div>`;
   return `<section class="card ch" data-stat="${c.stat}">
     <div class="section-head"><span class="label">Вызов недели</span><span class="muted small">до воскресенья</span></div>
     <h2>${esc(c.title)}</h2>
     <div class="bar ch-bar"><i style="width:${pct}%"></i></div>
-    <div class="row" style="justify-content:space-between"><span class="mono">${Math.min(wk.marks.length, n)}/${n}</span>${actions}</div>${n < c.n ? `<span class="muted small">Неделя неполная, цель уменьшена с ${c.n} до ${n}</span>` : ''}
+    <div class="row" style="justify-content:space-between"><span class="mono">${Math.min(r.got, n)}/${n}</span>${actions}</div>${n < c.n ? `<span class="muted small">Неделя неполная, цель уменьшена с ${c.n} до ${n}</span>` : ''}
     ${stake}
   </section>`;
 }
@@ -963,7 +979,7 @@ function viewToday() {
   if (daysBetween(S.lastBackup || S.created, t) >= 7) html += `<section class="card hl"><span class="label">Раз в неделю</span><h2>Сохрани резервную копию</h2>
     <p class="muted small">Данные живут только на этом телефоне. Копия займёт 10 секунд.</p><div class="row"><button class="btn sm" data-a="export">Сохранить копию</button><button class="linkbtn" data-a="backup-later">Напомни завтра</button></div></section>`;
   const lastCh = challengeResult(prevW);
-  if (lastCh && lastCh.lost && !S.weeks[prevW].seenLoss) html += `<section class="card warnc"><span class="label">Ставка сгорела</span><p>Вызов «${esc(lastCh.c.title)}» не добит: ${lastCh.wk.marks.length}/${lastCh.n}. Минус ${lastCh.wk.stake} монет.</p><button class="linkbtn" data-a="seen-loss" data-w="${prevW}" style="align-self:flex-start">Понял</button></section>`;
+  if (lastCh && lastCh.lost && !S.weeks[prevW].seenLoss) html += `<section class="card warnc"><span class="label">Ставка сгорела</span><p>Вызов «${esc(lastCh.c.title)}» не добит: ${lastCh.got}/${lastCh.n}. Минус ${lastCh.wk.stake} монет.</p><button class="linkbtn" data-a="seen-loss" data-w="${prevW}" style="align-self:flex-start">Понял</button></section>`;
 
   if (y >= S.created && !anyDone(y) && !peekDay(y).noted) {
     const d = peekDay(y), tags = d.tags || [];
@@ -1205,7 +1221,7 @@ function summaryLines(w, sc) {
   }
   if (sc.cards) out.push(`Карт дня выполнено: ${sc.cards}.`);
   const ch = challengeResult(w);
-  if (ch) out.push(`Вызов «${ch.c.title}»: ${ch.wk.marks.length}/${ch.n}${ch.done ? ', выполнен' : ch.over ? ', не добит' : ''}${ch.wk.stake ? `, ставка ${ch.wk.stake}` : ''}.`);
+  if (ch) out.push(`Вызов «${ch.c.title}»: ${ch.got}/${ch.n}${ch.done ? ', выполнен' : ch.over ? ', не добит' : ''}${ch.wk.stake ? `, ставка ${ch.wk.stake}` : ''}.`);
   for (const b of S.bosses.filter(b => b.created <= addDays(w, 6) && (!b.defeated || b.defeated >= w))) {
     const T = BT[b.type], p = bossWeek(b, w), st = bossState(b);
     if (b.defeated && b.defeated <= addDays(w, 6)) { out.push(`${b.name}: побеждён ${fmtDay(b.defeated)}.${roast ? ' Легенда.' : ''}`); continue; }
@@ -1629,7 +1645,7 @@ async function drawShare(w) {
     x.fillStyle = mut; x.font = `500 32px ${B}`; x.fillText(l, tx + 34, ty + 175);
   });
   const ch = challengeResult(w);
-  if (ch) { x.fillStyle = ch.done ? gold : mut; x.font = `600 32px ${B}`; x.fillText(`Вызов недели: ${ch.done ? 'выполнен' : `${ch.wk.marks.length}/${ch.n}`}`, 90, 1110); }
+  if (ch) { x.fillStyle = ch.done ? gold : mut; x.font = `600 32px ${B}`; x.fillText(`Вызов недели: ${ch.done ? 'выполнен' : `${ch.got}/${ch.n}`}`, 90, 1110); }
   x.fillStyle = gold; roundRect(x, 90, 1210, 64, 64, 18); x.fill();
   x.strokeStyle = ink; x.lineWidth = 7; x.lineJoin = 'round'; x.beginPath(); x.moveTo(104, 1258); x.lineTo(114, 1258); x.lineTo(114, 1246); x.lineTo(124, 1246); x.lineTo(124, 1234); x.lineTo(134, 1234); x.lineTo(134, 1224); x.lineTo(142, 1224); x.stroke();
   x.fillStyle = fg; x.font = `700 36px ${D}`; x.fillText('Точка сохранения', 176, 1254);
