@@ -466,3 +466,11 @@ const EVENTS = [
   { id: 'lucky', title: 'Счастливая карта', text: 'Карта дня сегодня даёт ×2 монет.', weight: 25 },
 ];
 const EVENT_CHANCE = .35;
+
+/* Связи квестов с боссами: после «Финиша» таймера урон идёт боссу нужного типа.
+   ask — спросить число, hours — посчитать часы по таймеру автоматически. */
+const QUEST_BOSS = {
+  read: { type: 'books', ask: 'Сколько страниц прочитал?', step: '1' },
+  study: { type: 'study', hours: true },
+  walk: { type: 'distance', ask: 'Сколько километров прошёл?', step: '0.1' },
+};

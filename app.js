@@ -521,6 +521,13 @@ function bossScore(w) {
     return s + (goal > 0 ? Math.min(1, Math.max(0, p / goal)) : (p > 0 ? 1 : 0));
   }, 0) / list.length * 10;
 }
+function bossHit(b, amount, t) {
+  b.hits.push({ day: t, amount, ts: Date.now() });
+  const won = checkBossKill(b, t);
+  if (won) setTimeout(() => toast(`Босс «${b.name}» побеждён! +500 опыта`, true), 1400);
+  return won;
+}
+const linkedBoss = qid => { const L = QUEST_BOSS[qid]; return L ? activeBosses().find(b => b.type === L.type) : null; };
 function checkBossKill(b, t) {
   if (!b.defeated && bossState(b).hp <= 0) { b.defeated = t; S.events.push({ day: t, type: 'bosskill', id: b.id }); return true; }
   if (b.defeated && bossState(b).hp > 0) b.defeated = null;
@@ -829,6 +836,8 @@ function questCard(q, t) {
   else if (!done && win.note && q.kind !== 'wake') sub += ` · ${win.note}`;
   if (!done && q.kind === 'wake' && win.open) extra = `<div class="q-extra"><button class="linkbtn" data-a="time-sheet" data-id="wake">Встал раньше, указать время</button></div>`;
   if (!done && q.kind === 'bed' && win.open && !nosleepFor(t)) extra = `<div class="q-extra"><button class="linkbtn" data-a="time-sheet" data-id="bed">Уже лёг, указать время</button></div>`;
+  const lb = linkedBoss(q.id);
+  if (lb && !done) sub += ` · урон боссу «${lb.name}»`;
   const kindLabel = q.kind === 'timer' ? ` · ${q.mins} мин` : q.proof === 'photo' ? ' · фото' : q.kind === 'text' ? ' · текст' : '';
   return `
   <article class="q${done ? ' done' : ''}${!done && !win.open ? ' closed' : ''}" data-stat="${q.stat}">
@@ -1469,6 +1478,13 @@ function viewSheet() {
       <p class="muted small">Обычно советуют 15 минут раз в 2–3 дня.</p>
       <button class="btn" data-a="shift-save">Составить план</button>`);
   }
+  if (sh.type === 'link') {
+    const b = S.bosses.find(x => x.id === sh.bossId), L = QUEST_BOSS[sh.qid];
+    return sheetWrap('Урон боссу', `<span class="label">Квест выполнен</span><h2>${esc(L.ask)}</h2>
+      <p class="muted small">Урон пойдёт боссу «${esc(b.name)}». Если не знаешь точно, закрой окно — квест уже засчитан.</p>
+      <input type="number" id="lk" inputmode="decimal" min="0" step="${L.step}" placeholder="${esc(BT[b.type].hitLabel)}">
+      <button class="btn" data-a="link-hit">Нанести урон</button>`);
+  }
   if (sh.type === 'confirm') return sheetWrap(sh.title, `<h2>${esc(sh.title)}</h2>${sh.text ? `<p class="muted">${esc(sh.text)}</p>` : ''}
     <button class="btn danger-fill" data-a="confirm-yes">${esc(sh.yes || 'Удалить')}</button>`);
   if (sh.type === 'boss') {
@@ -1754,7 +1770,12 @@ document.addEventListener('click', async e => {
       delete S.timers[k];
       if (tm.day !== t && passed > 12 * 60) { save(); render(); toast('Таймер висел слишком долго и сброшен'); return; }
       if (k === 'card') { const R = RARITY[CARD[peekDay(tm.day).card.id].rarity]; markCard(tm.day, { v: 1, proof: 'timer', c: R.coins }); }
-      else mark(k, tm.day, { v: 1, proof: 'timer', c: 10 });
+      else {
+        mark(k, tm.day, { v: 1, proof: 'timer', c: 10, mins: Math.round(passed) });
+        const L = QUEST_BOSS[k], b = linkedBoss(k);
+        if (b && L.hours) { const h = Math.max(.25, Math.round(passed / 60 * 4) / 4); bossHit(b, h, tm.day); setTimeout(() => toast(`Босс «${b.name}»: −${fmtN(h, b.unit)}`), 900); }
+        else if (b && L.ask) { const ls = { type: 'link', bossId: b.id, qid: k, day: tm.day }; if (ui.sheet) ui.nextSheet = ls; else ui.sheet = ls; }
+      }
       afterChange(px, pc); return;
     }
     case 'timer-cancel': delete S.timers[el.dataset.k]; save(); render(); return;
@@ -1817,7 +1838,7 @@ document.addEventListener('click', async e => {
     case 'shift-stop': S.sleep.shift = null; save(); render(); toast('Переход остановлен, цели — твой желаемый режим'); return;
 
     case 'sprint-keep': {
-      S.sprints.push({ ts: Date.now(), day: t, kept: true }); ui.sheet = null; save();
+      S.sprints.push({ ts: Date.now(), day: t, kept: true }); ui.sheet = ui.nextSheet || null; ui.nextSheet = null; save();
       const n = sprintsIn(weekOf(t));
       render(); toast(n >= SPRINT_FLAG ? 'Неделя помечена ⚠' : `Принято. Ещё ${SPRINT_FLAG - n} — и неделя получит ⚠`); return;
     }
@@ -1857,6 +1878,11 @@ document.addEventListener('click', async e => {
       save(); openIcs(ids); return;
     }
     case 'ics-share': try { await navigator.share({ files: [ui.sheet.file] }); } catch (err) { if (err?.name !== 'AbortError') toast('Не получилось. Создай напоминание вручную'); } return;
+    case 'link-hit': {
+      const v = num(val('lk')); if (!(v > 0)) { toast('Введи число больше нуля'); return; }
+      const b = S.bosses.find(x => x.id === ui.sheet.bossId), d0 = ui.sheet.day; ui.sheet = null;
+      bossHit(b, v, d0); afterChange(px, pc); toast(`Босс «${b.name}»: −${fmtN(v, b.unit)}`); return;
+    }
     case 'boss-hit': {
       const b = S.bosses.find(x => x.id === el.dataset.id), T = BT[b.type], v = num(val('bh-' + b.id));
       if (!(v > 0)) { toast('Введи число больше нуля'); return; }
