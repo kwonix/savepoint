@@ -533,7 +533,7 @@ function afterChange(prevXp, prevCoins) {
     const newPal = PALETTES.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
     const newPerk = PERKS.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
     S.lastLevel = L; save();
-    if (newPal.length || newPerk.length) setTimeout(() => toast(`Открыто: ${[...newPal.map(n => 'тема «' + n + '»'), ...newPerk.map(n => 'фишка «' + n + '»')].join(', ')}. Включи в Профиле`, true), delay + 800);
+    if (newPal.length || newPerk.length) setTimeout(() => toast(`Открыто: ${[...newPal.map(n => 'тема «' + n + '»'), ...newPerk.map(n => 'фишка «' + n + '»')].join(', ')}. Включи в настройках`, true), delay + 800);
     setTimeout(() => toast(`Новый уровень: ${L}${slotsUp ? '. Открыт новый слот для квеста' : ''}`, true), delay); delay += 800;
   }
   if (got.length) { setTimeout(() => toast(got.length === 1 ? `Ачивка: ${got[0].title}` : `Новые ачивки: ${got.map(a => a.title).join(', ')}`, true), delay); delay += 800; }
@@ -1275,7 +1275,10 @@ function sleepSettings() {
 
 function viewMe() {
   const x = xpAll(), lv = levelOf(x.total), bal = coins();
-  let html = `<header class="top"><span class="label">${esc(S.profile.name || 'Профиль')}</span><h1>Уровень ${lv.L}</h1><p class="muted">Опыт: <span class="mono">${x.total}</span> · монеты: <span class="mono">${bal}</span> · играешь с ${fmtDay(S.created)}</p></header>`;
+  if (ui.sub === 'settings') return viewSettings();
+  let html = `<header class="top"><div class="top-row"><div style="min-width:0"><span class="label">${esc(S.profile.name || 'Профиль')}${titleName() ? ' · ' + esc(titleName()) : ''}</span><h1>Уровень ${lv.L}</h1></div>
+    <button class="iconbtn" data-a="settings-open" aria-label="Настройки"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
+    <p class="muted">Опыт: <span class="mono">${x.total}</span> · монеты: <span class="mono">${bal}</span> · играешь с ${fmtDay(S.created)}</p></header>`;
   html += `<section class="stats">${Object.entries(STATS).map(([k, v]) => {
     const l = levelOf(x.st[k], 40);
     return `<div class="stat" data-stat="${k}"><div class="stat-top"><span class="stat-name">${v.name}</span><span class="stat-lvl">${l.L}</span></div>
@@ -1295,17 +1298,23 @@ function viewMe() {
     ${S.shop.bought.length ? `<div class="label">Куплено</div>${S.shop.bought.slice(-5).reverse().map(b => `<div class="kv"><span>${esc(b.title)} · ${fmtDay(b.day)}</span><span class="mono">−${b.price}</span></div>`).join('')}` : ''}
   </section>`;
 
-  const st = S.settings;
-  html += `<section class="card"><h2>Настройки</h2>
-    <div class="grid2"><label class="field"><span>Подъём</span><input id="s-wake" type="time" value="${st.wake}"></label>
-    <label class="field"><span>Отбой</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
-    <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone !== 'roast' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
-    <button class="btn sm" data-a="save-settings">Сохранить настройки</button>
-    <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
+  html += `<button class="btn ghost" data-a="settings-open">Настройки</button>`;
+  return html;
+}
 
+function viewSettings() {
+  let html = `<header class="top"><button class="back" data-a="settings-close">‹ Профиль</button><h1>Настройки</h1></header>`;
+  html += `<section class="card"><h2>Анкета</h2><p class="muted small">Имя, режим, квесты, боссы, разовые дела и награды.</p><button class="btn sm ghost" data-a="wiz-open" style="align-self:flex-start">Изменить анкету</button></section>`;
   html += looksSettings();
   html += sleepSettings();
-  html += `<section class="card"><h2>Анкета</h2><p class="muted small">Имя, режим, квесты, боссы, разовые дела и награды.</p><button class="btn sm ghost" data-a="wiz-open" style="align-self:flex-start">Изменить анкету</button></section>`;
+  const st = S.settings;
+  html += `<section class="card"><h2>Режим и сводка</h2>
+    <div class="grid2"><label class="field"><span>Хочу вставать в</span><input id="s-wake" type="time" value="${st.wake}"></label>
+    <label class="field"><span>Хочу ложиться в</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
+    <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone === 'neutral' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
+    <button class="btn sm" data-a="save-settings">Сохранить</button>
+    <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
+
   html += `<section class="card"><h2>Как это работает</h2><p class="muted small">Правила, окна отметок и защита от накрутки.</p><button class="btn sm ghost" data-a="guide-open" style="align-self:flex-start">Открыть гайд</button></section>`;
   html += `<section class="card"><h2>Резервная копия</h2>
     <p class="muted small">Все данные лежат только на телефоне. Удалишь иконку — пропадут. Раз в неделю сохраняй копию: отправь себе в «Избранное» или в заметки. Фото в копию не входят.</p>
@@ -1635,8 +1644,10 @@ document.addEventListener('click', async e => {
   switch (a) {
     case 'quote-next': ui.quoteShift = (ui.quoteShift || 0) + 1; render(); return;
     case 'chest': { const e = day(t).ev; if (!e || e.claimed) return; e.claimed = true; afterChange(px, pc); return; }
-    case 'tab': ui.tab = el.dataset.t; ui.week = null; window.scrollTo(0, 0); render(); return;
-    case 'go-shop': ui.tab = 'me'; render(); document.getElementById('shop')?.scrollIntoView({ block: 'start' }); return;
+    case 'tab': ui.tab = el.dataset.t; ui.week = null; ui.sub = null; window.scrollTo(0, 0); render(); return;
+    case 'go-shop': ui.tab = 'me'; ui.sub = null; render(); document.getElementById('shop')?.scrollIntoView({ block: 'start' }); return;
+    case 'settings-open': ui.sub = 'settings'; window.scrollTo(0, 0); render(); return;
+    case 'settings-close': ui.sub = null; window.scrollTo(0, 0); render(); return;
     case 'guide-open': ui.guide = 0; window.scrollTo(0, 0); render(); return;
     case 'wiz-open': ui.wiz = editWiz(); window.scrollTo(0, 0); render(); return;
     case 'locked': toast(el.dataset.why || 'Сейчас отметить нельзя'); return;
