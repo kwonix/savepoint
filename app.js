@@ -65,7 +65,7 @@ function fresh(d) {
     bosses: (d.bosses || []).map(b => makeBoss(b, t)),
     quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
     days: {}, side: {}, sideList: d.side || [], custom: d.custom || [], events: [], guide: true,
-    seenVersion: APP_VERSION, lastBackup: t,
+    seenVersion: APP_VERSION, lastBackup: t, sleep: { enabled: d.sleep === true, checkin: d.sleep === true, shift: null },
     shop: { rewards: d.rewards || [], bought: [] },
   });
 }
@@ -81,6 +81,7 @@ function migrate(s) {
   delete s.boss;
   if (!s.sideList) s.sideList = [...new Set([...SIDE_DEFAULT, ...Object.keys(s.side || {}).filter(id => SIDE.some(x => x.id === id))])];
   s.lastBackup ||= s.created;
+  s.sleep ||= { enabled: false, checkin: false, shift: null };
   s.quests ||= {}; s.days ||= {}; s.side ||= {}; s.custom ||= []; s.events ||= [];
   s.timers ||= {}; s.weeks ||= {}; s.ach ||= {}; s.sprints ||= []; s.fixes ||= {};
   s.shop ||= { rewards: DEFAULT_REWARDS.map(r => ({ ...r })), bought: [] };
@@ -284,8 +285,32 @@ function xpAll() {
 }
 
 /* ================= качество отметок ================= */
-function wakeQuality(date) { const diff = nowSh(date) - shMin(S.settings.wake); return diff <= 60 ? 1 : diff <= 180 ? .5 : .25; }
-function bedQuality(date) { const target = shMin(S.settings.bed); const m = nowSh(date); return m <= target ? 1 : m <= target + 90 ? .5 : .25; }
+/* Сон: желаемый режим в настройках, плавный переход — по желанию */
+const fromSh = m => { const v = (m + DAY_SHIFT_H * 60) % 1440; return `${pad(Math.floor(v / 60))}:${pad(v % 60)}`; };
+const sleepOn = () => !!S?.sleep?.enabled;
+function shiftPlan(sh = S.sleep?.shift) {
+  if (!sh) return null;
+  const dW = shMin(S.settings.wake) - shMin(sh.fromWake), dB = shMin(S.settings.bed) - shMin(sh.fromBed);
+  const stages = Math.max(1, Math.ceil(Math.max(Math.abs(dW), Math.abs(dB)) / sh.step));
+  return { dW, dB, stages, end: addDays(sh.start, stages * sh.every) };
+}
+function sleepTargets(k = todayKey()) {
+  const sh = S.sleep?.shift, plan = shiftPlan();
+  if (!sleepOn() || !sh || !plan) return { wake: S.settings.wake, bed: S.settings.bed, stage: null };
+  const stage = Math.min(plan.stages, Math.floor(Math.max(0, daysBetween(sh.start, k)) / sh.every) + 1);
+  const move = (from, d) => fromSh(shMin(from) + Math.sign(d) * Math.min(Math.abs(d), stage * sh.step));
+  const done = daysBetween(sh.start, k) >= plan.stages * sh.every;
+  return done ? { wake: S.settings.wake, bed: S.settings.bed, stage: plan.stages, stages: plan.stages, done: true }
+    : { wake: move(sh.fromWake, plan.dW), bed: move(sh.fromBed, plan.dB), stage, stages: plan.stages, done: false };
+}
+function wakeQuality(date) { const diff = nowSh(date) - shMin(sleepTargets().wake); return diff <= 60 ? 1 : diff <= 180 ? .5 : .25; }
+function bedQuality(date) { const target = shMin(sleepTargets().bed); const m = nowSh(date); return m <= target ? 1 : m <= target + 90 ? .5 : .25; }
+function sleptHours(k) {
+  const b = peekDay(addDays(k, -1)).q.bed, w = peekDay(k).q.wake;
+  if (!b?.ts || !w?.ts) return null;
+  const h = (w.ts - b.ts) / 3600e3; return h > 2 && h < 16 ? Math.round(h * 10) / 10 : null;
+}
+const SLEEP_Q = ['Ужасно', 'Плохо', 'Так себе', 'Хорошо', 'Отлично'];
 function smokeLimit(k) {
   const prevW = addDays(weekOf(k), -7); let sum = 0, n = 0;
   for (let i = 0; i < 7; i++) { const d = peekDay(addDays(prevW, i)); if (typeof d.cigs === 'number' && d.q.smoke) { sum += d.cigs; n++; } }
@@ -583,7 +608,7 @@ function newWiz() {
 }
 function editWiz() {
   return { step: 0, mode: 'edit', d: { name: S.profile.name || '', wake: S.settings.wake, bed: S.settings.bed,
-    quests: activeQuests().map(q => q.id), bosses: [], keep: activeBosses().map(b => b.id),
+    quests: activeQuests().map(q => q.id), bosses: [], keep: activeBosses().map(b => b.id), sleep: !!S.sleep?.enabled,
     side: S.sideList.slice(), custom: S.custom.map(c => ({ ...c })), rewards: S.shop.rewards.map(r => ({ ...r, on: true })),
     tone: S.settings.tone, theme: S.settings.theme || 'auto' } };
 }
@@ -596,6 +621,7 @@ function wizProblem() {
   const d = ui.wiz.d, step = WIZ[ui.wiz.step];
   if (step === 'name' && !d.name.trim()) return 'Напиши, как к тебе обращаться';
   if (step === 'day' && (!d.wake || !d.bed)) return 'Укажи время подъёма и отбоя';
+  if (step === 'day' && typeof d.sleep !== 'boolean') return 'Выбери, нужен ли режим сна';
   if (step === 'quests' && !d.quests.length) return 'Выбери хотя бы один квест';
   if (step === 'style' && (!d.tone || !d.theme)) return 'Выбери тон сводки и тему';
   if (step === 'bosses') { for (const b of d.bosses) { const e = bossProblem(b); if (e) return `${BT[b.type].name}: ${e.toLowerCase()}`; } }
@@ -608,10 +634,11 @@ function viewWizard() {
   let body = '';
   if (step === 'name') body = head('Как тебя зовут?', 'Так приложение будет к тебе обращаться. Имя увидят только те, кому ты сам отправишь карточку недели.')
     + `<input type="text" data-wf="name" id="wz-name" maxlength="24" placeholder="Имя или ник" value="${esc(d.name)}" autocomplete="given-name">`;
-  else if (step === 'day') body = head('Твой режим', 'От этого зависят окна отметок: подъём засчитывается полностью в течение часа от цели, отбой — до цели.')
-    + `<div class="grid2"><label class="field"><span>Во сколько встаёшь</span><input type="time" data-wf="wake" value="${d.wake || ''}"></label>
-       <label class="field"><span>Во сколько ложишься</span><input type="time" data-wf="bed" value="${d.bed || ''}"></label></div>
-       <p class="muted small">День в приложении заканчивается в 04:00. Если лёг в 2 ночи, это засчитается во вчерашний день.</p>`;
+  else if (step === 'day') body = head('Режим, к которому идёшь', 'Укажи, во сколько хочешь ложиться и вставать. Это цель, а не то, как сейчас.')
+    + `<div class="grid2"><label class="field"><span>Хочу ложиться в</span><input type="time" data-wf="bed" value="${d.bed || ''}"></label>
+       <label class="field"><span>Хочу вставать в</span><input type="time" data-wf="wake" value="${d.wake || ''}"></label></div>
+       <div class="field"><span>Включить режим сна?</span><div class="seg"><button class="${d.sleep === true ? 'on' : ''}" data-a="wz-sleep" data-v="1">Да</button><button class="${d.sleep === false ? 'on' : ''}" data-a="wz-sleep" data-v="0">Нет</button></div></div>
+       <p class="muted small">Режим сна — это карточка на главном экране, утренний чек-ин «как спалось», плавный переход на новое время и будильники в Календарь. Если не нужно, ничего про сон показываться не будет. Включить можно позже в настройках.</p>`;
   else if (step === 'quests') {
     const lim = wizQuestLimit();
     body = head('С чего начнём', `Выбери сам до ${lim} ${plural(lim, 'квеста', 'квестов', 'квестов')} на каждый день. Остальные возьмёшь позже, когда откроются слоты. Мало — это специально.`)
@@ -660,6 +687,8 @@ function wizApply() {
     toast(`${d.name.trim()}, сохранение создано. Первые квесты ждут`, true); return;
   }
   S.profile.name = d.name.trim(); Object.assign(S.settings, { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme });
+  if (d.sleep && !S.sleep.enabled) S.sleep.checkin = true;
+  S.sleep.enabled = d.sleep;
   for (const q of activeQuests()) if (!d.quests.includes(q.id)) deactivate(q.id, t);
   for (const id of d.quests) if (qStatus(id) === 'off') activate(id, t);
   S.bosses = S.bosses.filter(b => b.defeated || d.keep.includes(b.id)).concat(d.bosses.map(b => makeBoss(b, t)));
@@ -718,10 +747,11 @@ function questCard(q, t) {
   let sub = q.hint, extra = '';
   const gain = rec ? ` · +${Math.round(20 * rec.v)} опыта${recCoins(rec) ? `, +${recCoins(rec)} монет` : ''}` : '';
   const proofTag = rec?.proof === 'photo' ? ' · 📷' : rec?.proof === 'timer' ? ' · ⏱' : rec?.fix ? ' · исправление' : '';
-  if (q.kind === 'wake') sub = done ? `Встал в ${rec.time}${gain}` : `Цель ${S.settings.wake}, полный опыт до ${addMin(S.settings.wake, 60)}`;
+  const tg = sleepTargets(t);
+  if (q.kind === 'wake') sub = done ? `Встал в ${rec.time}${gain}` : `Цель ${tg.wake}, полный опыт до ${addMin(tg.wake, 60)}`;
   else if (q.kind === 'bed') {
     const ns = nosleepFor(t);
-    sub = done ? `Лёг в ${rec.time}${gain}` : ns ? 'Записано: не ложился' : `Цель: лечь до ${S.settings.bed}`;
+    sub = done ? `Лёг в ${rec.time}${gain}` : ns ? 'Записано: не ложился' : `Цель: лечь до ${tg.bed}`;
   }
   else if (q.kind === 'smoke') {
     const c = d.cigs || 0, lim = smokeLimit(t);
@@ -791,6 +821,29 @@ function challengeCard(t) {
 }
 
 function nosleepFor(k) { return peekDay(k).nosleep; }
+const morning = () => { const h = new Date().getHours(); return h >= 4 && h < 16; };
+function nosleepBlock() {
+  const nk = nightKey(), ns = nosleepFor(nk);
+  if (ns) return `<div class="nosleep-note"><span>Ночь на ${fmtDay(addDays(nk, 1))}: не ложился${ns.tags?.length ? ' · ' + esc(ns.tags.join(', ')) : ''}</span><button class="linkbtn" data-a="nosleep-undo">убрать</button></div>`;
+  return `<button class="nosleep-btn" data-a="nosleep-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/><path d="M15 3l4 4M19 3l-4 4"/></svg>Не ложился этой ночью</button>`;
+}
+function sleepCard(t) {
+  const showNs = morning();
+  if (!sleepOn()) {
+    // модуль выключен: «не ложился» только утром и только если есть квесты сна
+    return showNs && (activeOn('wake', t) || activeOn('bed', t)) ? `<section class="card sleep-mini">${nosleepBlock()}</section>` : '';
+  }
+  const tg = sleepTargets(t), d = peekDay(t), hrs = sleptHours(t);
+  let html = `<section class="card sleep" data-stat="sleep"><div class="section-head"><span class="label">Сон</span>${tg.stage ? `<span class="muted small">${tg.done ? 'Переход завершён' : `Этап ${tg.stage} из ${tg.stages}`}</span>` : ''}</div>
+    <div class="sleep-times"><div><span class="muted small">Отбой</span><b class="mono">${tg.bed}</b></div><div><span class="muted small">Подъём</span><b class="mono">${tg.wake}</b></div>${hrs ? `<div><span class="muted small">Спал</span><b class="mono">${hrs} ч</b></div>` : ''}</div>`;
+  if (S.sleep.checkin && showNs && !nosleepFor(nightKey())) {
+    html += d.sleepQ ? `<p class="small">Как спалось: <b>${SLEEP_Q[d.sleepQ - 1]}</b> <button class="linkbtn" data-a="sleepq-undo">изменить</button></p>`
+      : `<div class="field"><span>Как спалось?</span><div class="sq">${SLEEP_Q.map((n, i) => `<button class="pill" data-a="sleepq" data-v="${i + 1}">${n}</button>`).join('')}</div></div>`;
+  }
+  if (!S.sleep.shift) html += `<button class="linkbtn" data-a="shift-sheet" style="align-self:flex-start">Перейти на этот режим плавно</button>`;
+  if (showNs) html += nosleepBlock();
+  return html + '</section>';
+}
 function nightKey() { const h = new Date().getHours(); const t = todayKey(); return h >= 4 && h < 16 ? addDays(t, -1) : t; }
 
 function viewToday() {
@@ -825,6 +878,7 @@ function viewToday() {
         <div class="row"><button class="btn sm" data-a="auto-yes" data-id="${q.id}">Да, держится</button><button class="btn sm ghost" data-a="auto-no" data-id="${q.id}">Нет, верни в список</button></div></section>`;
   }
 
+  html += sleepCard(t);
   html += cardOfDay(t);
 
   const doneN = active.filter(q => doneOn(q.id, t)).length;
@@ -836,11 +890,6 @@ function viewToday() {
   html += `</section>`;
 
   html += challengeCard(t);
-
-  const nk = nightKey(), ns = nosleepFor(nk);
-  html += ns
-    ? `<section class="card"><span class="label">Ночь на ${fmtDay(addDays(nk, 1))}</span><p>Записано: не ложился. ${esc((ns.tags || []).join(', '))}${ns.text ? ` — «${esc(ns.text)}»` : ''}</p><button class="linkbtn" data-a="nosleep-undo" style="align-self:flex-start">Убрать запись</button></section>`
-    : `<button class="btn ghost" data-a="nosleep-sheet">Не ложился спать</button>`;
 
   html += activeBosses().map(b => bossCard(b, false)).join('');
 
@@ -1160,6 +1209,19 @@ function csv() {
   return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 }
 
+function sleepSettings() {
+  const sl = S.sleep, plan = shiftPlan(), tg = sleepTargets();
+  let h = `<section class="card" id="sleep-settings"><div class="section-head"><h2>Сон</h2><button class="toggle${sl.enabled ? ' on' : ''}" data-a="sleep-on" role="switch" aria-checked="${sl.enabled}" aria-label="Режим сна"><i></i></button></div>`;
+  if (!sl.enabled) return h + `<p class="muted small">Выключено: карточки сна на главном экране нет. Включи, если хочешь чек-ины, плавный переход и будильники.</p></section>`;
+  h += `<div class="kv"><span>Утренний чек-ин «как спалось»</span><button class="toggle${sl.checkin ? ' on' : ''}" data-a="sleep-checkin" role="switch" aria-checked="${sl.checkin}" aria-label="Чек-ин"><i></i></button></div>`;
+  h += sl.shift && plan
+    ? `<div class="kv"><span>Плавный переход: ${tg.done ? 'завершён' : `этап ${tg.stage} из ${plan.stages}, финиш ${fmtDay(plan.end)}`}</span><button class="linkbtn" data-a="shift-stop">остановить</button></div>`
+    : `<div class="kv"><span>Плавный переход не запущен</span><button class="linkbtn" data-a="shift-sheet">настроить</button></div>`;
+  h += `<div class="label">Будильники в Календарь</div><div class="row"><button class="btn sm ghost" data-a="alarms" data-k="wake">Подъём</button><button class="btn sm ghost" data-a="alarms" data-k="bed">Отбой</button><button class="btn sm ghost" data-a="alarms" data-k="both">Оба</button></div>
+    <p class="muted small">Календарь пришлёт уведомление в нужное время${sl.shift ? ' по каждому этапу перехода' : ''}. Настоящий будильник в «Часах» веб-приложение поставить не может, его включай сам.</p></section>`;
+  return h;
+}
+
 function viewMe() {
   const x = xpAll(), lv = levelOf(x.total), bal = coins();
   let html = `<header class="top"><span class="label">${esc(S.profile.name || 'Профиль')}</span><h1>Уровень ${lv.L}</h1><p class="muted">Опыт: <span class="mono">${x.total}</span> · монеты: <span class="mono">${bal}</span> · играешь с ${fmtDay(S.created)}</p></header>`;
@@ -1191,6 +1253,7 @@ function viewMe() {
     <button class="btn sm" data-a="save-settings">Сохранить настройки</button>
     <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
 
+  html += sleepSettings();
   html += `<section class="card"><h2>Анкета</h2><p class="muted small">Имя, режим, квесты, боссы, разовые дела и награды.</p><button class="btn sm ghost" data-a="wiz-open" style="align-self:flex-start">Изменить анкету</button></section>`;
   html += `<section class="card"><h2>Как это работает</h2><p class="muted small">Правила, окна отметок и защита от накрутки.</p><button class="btn sm ghost" data-a="guide-open" style="align-self:flex-start">Открыть гайд</button></section>`;
   html += `<section class="card"><h2>Резервная копия</h2>
@@ -1230,7 +1293,7 @@ function viewSheet() {
     <button class="btn" data-a="text-save" data-id="${q.id}">Записать</button>`); }
   if (sh.type === 'time') { const q = Q[sh.id]; return sheetWrap('Время', `<h2>${q.id === 'wake' ? 'Во сколько встал?' : 'Во сколько лёг?'}</h2>
     <p class="muted small">Только на сегодня и только в пределах окна. Отметка в будущем не засчитается.</p>
-    <input type="time" id="t-val" value="${q.id === 'wake' ? S.settings.wake : S.settings.bed}">
+    <input type="time" id="t-val" value="${q.id === 'wake' ? sleepTargets().wake : sleepTargets().bed}">
     <button class="btn" data-a="time-save" data-id="${q.id}">Сохранить</button>`); }
   if (sh.type === 'fix') {
     const y = addDays(t, -1);
@@ -1244,6 +1307,17 @@ function viewSheet() {
     <div class="chips">${NOSLEEP_TAGS.map(tg => `<button class="pill${sel.includes(tg) ? ' on' : ''}" data-a="ns-tag" data-t="${esc(tg)}">${esc(tg)}</button>`).join('')}</div>
     <input type="text" id="ns-text" placeholder="Что было? Одна строка" maxlength="160" value="${esc(sh.text || '')}">
     <button class="btn" data-a="nosleep-save">Записать</button>`); }
+  if (sh.type === 'shift') {
+    const opt = (k, vals, unit) => `<div class="chips">${vals.map(v => `<button class="pill${sh[k] === v ? ' on' : ''}" data-a="shift-opt" data-k="${k}" data-v="${v}">${v} ${unit(v)}</button>`).join('')}</div>`;
+    return sheetWrap('Плавный переход', `<span class="label">Сон</span><h2>Плавный переход на новый режим</h2>
+      <p class="muted small">Резко сдвигать сон тяжело. Время отбоя и подъёма будет смещаться небольшими шагами, пока не дойдёт до цели: отбой ${S.settings.bed}, подъём ${S.settings.wake}. Цели квестов «Подъём» и «Отбой» подстроятся под каждый этап.</p>
+      <div class="grid2"><label class="field"><span>Сейчас обычно ложусь</span><input type="time" id="sh-bed" value="${esc(sh.fromBed || '')}"></label>
+      <label class="field"><span>Сейчас обычно встаю</span><input type="time" id="sh-wake" value="${esc(sh.fromWake || '')}"></label></div>
+      <div class="field"><span>Шаг сдвига</span>${opt('step', [15, 30], () => 'мин')}</div>
+      <div class="field"><span>Сдвигать раз в</span>${opt('every', [2, 3, 4], v => plural(v, 'день', 'дня', 'дней'))}</div>
+      <p class="muted small">Обычно советуют 15 минут раз в 2–3 дня.</p>
+      <button class="btn" data-a="shift-save">Составить план</button>`);
+  }
   if (sh.type === 'confirm') return sheetWrap(sh.title, `<h2>${esc(sh.title)}</h2>${sh.text ? `<p class="muted">${esc(sh.text)}</p>` : ''}
     <button class="btn danger-fill" data-a="confirm-yes">${esc(sh.yes || 'Удалить')}</button>`);
   if (sh.type === 'boss') {
@@ -1356,6 +1430,36 @@ function icsFor(ids) {
       `SUMMARY:Сейв: ${q.title}`, `DESCRIPTION:${q.hint.replace(/[,;]/g, ' ')}`, 'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0M', `DESCRIPTION:${q.title}`, 'END:VALARM', 'END:VEVENT'].join('\r\n');
   });
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Savepoint//RU', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n');
+}
+function sleepIcs(kind) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const sh = S.sleep.shift, plan = shiftPlan(), t = todayKey(), ev = [];
+  const add = (dayK, time, count, title, desc, before) => {
+    const [h, m] = time.split(':').map(Number);
+    let dk = dayK; if (h < DAY_SHIFT_H) dk = addDays(dayK, 1);     // время после полуночи — уже следующий календарный день
+    ev.push(['BEGIN:VEVENT', `UID:savepoint-sleep-${kind}-${dk}-${time}-${Math.random().toString(36).slice(2)}@savepoint`, `DTSTAMP:${stamp}`,
+      `DTSTART:${dk.replace(/-/g, '')}T${pad(h)}${pad(m)}00`, 'DURATION:PT5M', count ? `RRULE:FREQ=DAILY;COUNT=${count}` : 'RRULE:FREQ=DAILY',
+      `SUMMARY:${title}`, `DESCRIPTION:${desc}`, 'BEGIN:VALARM', 'ACTION:DISPLAY', `TRIGGER:-PT${before}M`, `DESCRIPTION:${title}`, 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+  };
+  const both = (dayK, tg, count) => {
+    if (kind !== 'bed') add(dayK, tg.wake, count, 'Сейв: подъём', 'Время вставать', 0);
+    if (kind !== 'wake') add(dayK, tg.bed, count, 'Сейв: скоро отбой', `Отбой в ${tg.bed}. Закругляйся`, 30);
+  };
+  if (sh && plan && !sleepTargets(t).done) {
+    const curStage = sleepTargets(t).stage;
+    for (let st = curStage; st <= plan.stages; st++) {
+      const startK = st === curStage ? t : addDays(sh.start, (st - 1) * sh.every);
+      const tg = sleepTargets(startK), endK = addDays(sh.start, st * sh.every);
+      both(startK, tg, Math.max(1, daysBetween(startK, endK)));
+    }
+    both(plan.end, { wake: S.settings.wake, bed: S.settings.bed }, 0);
+  } else both(t, { wake: S.settings.wake, bed: S.settings.bed }, 0);
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Savepoint//RU', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n');
+}
+function openSleepIcs(kind) {
+  const file = new File([sleepIcs(kind)], 'savepoint-sleep.ics', { type: 'text/calendar' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+  ui.sheet = { type: 'ics', file, canShare: !!(navigator.canShare && navigator.canShare({ files: [file] })) }; render();
 }
 function openIcs(ids) {
   const text = icsFor(ids);
@@ -1542,6 +1646,21 @@ document.addEventListener('click', async e => {
       day(nightKey()).nosleep = { tags: sh.tags, text, ts: Date.now() }; ui.sheet = null; save(); render(); toast('Записал. Сегодня береги себя: вода, прогулка, лечь пораньше'); return;
     }
     case 'nosleep-undo': delete day(nightKey()).nosleep; save(); render(); return;
+    case 'sleepq': day(t).sleepQ = Number(el.dataset.v); save(); render(); toast('Записал'); return;
+    case 'sleepq-undo': delete day(t).sleepQ; save(); render(); return;
+    case 'sleep-on': S.sleep.enabled = !S.sleep.enabled; save(); render(); toast(S.sleep.enabled ? 'Режим сна включён' : 'Режим сна выключен'); return;
+    case 'sleep-checkin': S.sleep.checkin = !S.sleep.checkin; save(); render(); return;
+    case 'shift-sheet': ui.sheet = { type: 'shift', step: S.sleep.shift?.step || null, every: S.sleep.shift?.every || null }; render(); return;
+    case 'shift-opt': ui.sheet[el.dataset.k] = Number(el.dataset.v); ui.sheet.fromBed = val('sh-bed'); ui.sheet.fromWake = val('sh-wake'); render(); return;
+    case 'shift-save': {
+      const fb = val('sh-bed'), fw = val('sh-wake'), sh = ui.sheet;
+      if (!fb || !fw) { toast('Укажи, во сколько сейчас обычно ложишься и встаёшь'); return; }
+      if (!sh.step || !sh.every) { toast('Выбери шаг и как часто сдвигать'); return; }
+      S.sleep.enabled = true; S.sleep.shift = { fromBed: fb, fromWake: fw, step: sh.step, every: sh.every, start: t };
+      const plan = shiftPlan(); ui.sheet = null; save(); render(); toast(`План готов: ${plan.stages} ${plural(plan.stages, 'этап', 'этапа', 'этапов')}, финиш ${fmtDay(plan.end)}`, true); return;
+    }
+    case 'shift-stop': S.sleep.shift = null; save(); render(); toast('Переход остановлен, цели — твой желаемый режим'); return;
+    case 'alarms': openSleepIcs(el.dataset.k); return;
     case 'sprint-keep': {
       S.sprints.push({ ts: Date.now(), day: t, kept: true }); ui.sheet = null; save();
       const n = sprintsIn(weekOf(t));
@@ -1688,6 +1807,7 @@ function wizAction(a, el) {
     case 'wz-rw': { const r = d.rewards[Number(el.dataset.i)]; r.on = !r.on; return re(); }
     case 'wz-radd': { const title = val('wz-rtitle').trim(), price = Math.max(10, Math.round(num(val('wz-rprice')) || 200)); if (!title) { toast('Напиши, что за награда'); return; } d.rewards.push({ id: 'r' + Date.now(), title, price, on: true }); return re(); }
     case 'wz-tone': d.tone = el.dataset.v; return re();
+    case 'wz-sleep': d.sleep = el.dataset.v === '1'; return re();
     case 'wz-theme': d.theme = el.dataset.v; document.documentElement.toggleAttribute('data-theme', d.theme !== 'auto'); if (d.theme !== 'auto') document.documentElement.setAttribute('data-theme', d.theme); return re();
   }
 }
