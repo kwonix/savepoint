@@ -487,3 +487,16 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .wiz-nav .btn { box-shadow: var(--shadow); }
 .wiz .side { padding: 10px 0; }
 @media (max-width: 360px) { .btypes { grid-template-columns: 1fr; } }
+
+/* ================= листы ================= */
+.sheet { position: relative; padding-top: 26px; overscroll-behavior: contain; }
+.grabber { position: absolute; top: 8px; left: 50%; width: 40px; height: 5px; margin-left: -20px; border-radius: 99px; background: var(--line); }
+.sheet-x {
+  position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px));
+  width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--muted);
+  font-size: 1.35rem; line-height: 1; display: grid; place-items: center;
+}
+.sheet > h2:first-of-type, .sheet > .label:first-of-type { padding-right: 44px; }
+.btn.danger-fill { background: var(--danger); color: #fff; }
+.xbtn { width: 32px; height: 32px; flex: none; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--muted); font-size: 1.1rem; line-height: 1; }
+.row.nowrap { flex-wrap: nowrap; }

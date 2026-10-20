@@ -857,9 +857,7 @@ function bossCard(b, full) {
   }
   const hist = full && b.hits.length ? `<div class="muted small">Последние: ${b.hits.slice(-4).reverse().map(h => `${fmtDay(h.day)} — ${T.mode === 'sum' ? fmtN(h.amount, b.unit) : T.mode === 'measure' ? fmtN(h.value, b.unit) : h.clean ? 'чисто' : 'срыв'}`).join(' · ')}
     ${T.mode !== 'streak' ? `<button class="linkbtn" data-a="boss-undo" data-id="${b.id}">отменить последний</button>` : ''}</div>` : '';
-  const del = full ? (ui.bossDel === b.id
-    ? `<div class="row"><span class="small">Удалить босса вместе с историей?</span><button class="btn sm danger" data-a="boss-del-yes" data-id="${b.id}">Удалить</button><button class="linkbtn" data-a="boss-del-no">Нет</button></div>`
-    : `<button class="linkbtn" data-a="boss-del" data-id="${b.id}" style="align-self:flex-start">удалить босса</button>`) : '';
+  const del = full ? `<button class="linkbtn" data-a="boss-del" data-id="${b.id}" style="align-self:flex-start">удалить босса</button>` : '';
   return `<section class="card boss" data-stat="${b.stat}">
     <div class="boss-top"><span class="boss-name">${esc(b.name)}</span><span class="chip">${esc(T.name)}</span></div>
     <div class="hp" role="img" aria-label="Здоровье босса ${Math.round(hpPct)}%"><i style="width:${hpPct.toFixed(1)}%"></i></div>
@@ -906,10 +904,6 @@ function viewQuests() {
     ${active.length > 1 ? '<button class="btn sm ghost" data-a="ics-all" style="align-self:flex-start">Все напоминания в Календарь</button>' : ''}
     <p class="muted small">Календарь айфона сам пришлёт уведомление в нужное время каждый день.</p></section>`;
 
-  if (ui.confirmDrop) {
-    const q = Q[ui.confirmDrop];
-    html += `<section class="card warnc"><p>Убрать «${esc(q.title)}»? Прогресс до автопилота начнётся заново, если вернёшь.</p><div class="row"><button class="btn sm danger" data-a="q-drop-yes">Убрать</button><button class="btn sm ghost" data-a="q-drop-no">Оставить</button></div></section>`;
-  }
 
   html += viewBosses();
 
@@ -936,7 +930,7 @@ function viewQuests() {
     const done = s.repeat === 'week' ? ds.some(d => d >= w) : ds.length > 0;
     html += `<div class="side${done ? ' done' : ''}"><div style="min-width:0"><div class="side-title">${esc(s.title)}</div>
       <span class="muted small">${STATS[s.stat].name}${s.repeat ? ' · раз в неделю' : ''}${done && !s.repeat ? ' · ' + fmtDay(ds[ds.length - 1]) : ''}</span></div>
-      ${done ? `<button class="linkbtn" data-a="side-undo" data-id="${s.id}">отменить</button>` : `<button class="btn sm" data-a="side" data-id="${s.id}">+${s.xp}</button>`}</div>`;
+      <div class="row nowrap">${done ? `<button class="linkbtn" data-a="side-undo" data-id="${s.id}">отменить</button>` : `<button class="btn sm" data-a="side" data-id="${s.id}">+${s.xp}</button>`}<button class="xbtn" data-a="side-del" data-id="${s.id}" aria-label="Удалить">×</button></div></div>`;
   }
   const rest = SIDE.filter(x => !(S.sideList || []).includes(x.id));
   if (rest.length) html += `</div><details><summary class="muted">Добавить из списка</summary><div class="chips stack">${rest.map(x => `<button class="pill" data-a="side-add" data-id="${x.id}">+ ${esc(x.title)}</button>`).join('')}</div></details><div>`;
@@ -1158,7 +1152,7 @@ function viewMe() {
   html += `<section class="card" id="shop"><div class="section-head"><h2>Магазин наград</h2><span class="coins static">${ICON.coin}<span class="mono">${bal}</span></span></div>
     <p class="muted small">Монеты дают за квесты, карты, вызовы и ачивки. Награды придумываешь сам. Отдых по плану — не срыв.</p>
     ${S.shop.rewards.map(r => `<div class="side"><div style="min-width:0"><div class="side-title">${esc(r.title)}</div><span class="muted small mono">${r.price} монет</span></div>
-      <div class="row"><button class="btn sm" data-a="buy" data-id="${r.id}" ${bal < r.price ? 'disabled' : ''}>Купить</button><button class="linkbtn" data-a="reward-del" data-id="${r.id}" aria-label="Удалить награду">×</button></div></div>`).join('')}
+      <div class="row"><button class="btn sm" data-a="buy" data-id="${r.id}" ${bal < r.price ? 'disabled' : ''}>Купить</button><button class="xbtn" data-a="reward-del" data-id="${r.id}" aria-label="Удалить награду">×</button></div></div>`).join('')}
     <details><summary class="muted">Добавить свою награду</summary><div class="stack">
       <input type="text" id="rw-title" placeholder="Например: шаурма в выходной" maxlength="60">
       <input type="number" id="rw-price" min="10" step="10" value="200" aria-label="Цена в монетах">
@@ -1182,57 +1176,58 @@ function viewMe() {
     <div class="row"><button class="btn sm" data-a="export">Сохранить копию</button><button class="btn sm ghost" data-a="open-import">Восстановить</button></div></section>`;
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   if (!standalone) html += `<section class="card"><h2>Поставить на экран «Домой»</h2><p class="muted small">В Safari нажми «Поделиться», затем «На экран "Домой"». После этого приложение работает без интернета.</p></section>`;
-  html += `<section class="card"><h2>Сброс</h2>${ui.confirmReset
-    ? `<p>Удалить весь прогресс без возврата?</p><div class="row"><button class="btn sm danger" data-a="reset-yes">Да, удалить всё</button><button class="btn sm ghost" data-a="reset-no">Отмена</button></div>`
-    : `<button class="btn sm danger" data-a="reset-ask" style="align-self:flex-start">Начать заново</button>`}</section>`;
+  html += `<section class="card"><h2>Сброс</h2><button class="btn sm danger" data-a="reset-ask" style="align-self:flex-start">Начать заново</button></section>`;
   html += `<p class="muted small center">Точка сохранения · версия ${APP_VERSION} · данные только на этом устройстве</p>`;
   return html;
 }
 
 /* ================= листы ================= */
-function sheetWrap(label, inner) { return `<div class="sheet-bg" data-a="close-sheet"><div class="sheet" role="dialog" aria-label="${label}">${inner}</div></div>`; }
+function sheetWrap(label, inner, locked) {
+  return `<div class="sheet-bg" data-a="close-sheet"><div class="sheet${locked ? ' locked-sheet' : ''}" role="dialog" aria-modal="true" aria-label="${label}">
+    <div class="grabber" aria-hidden="true"></div>${locked ? '' : '<button class="sheet-x" data-a="close-sheet" aria-label="Закрыть">×</button>'}${inner}</div></div>`;
+}
 function viewSheet() {
   const sh = ui.sheet; if (!sh) return '';
   const t = todayKey();
   if (sh.type === 'share') return sheetWrap('Карточка недели', `<h2>Карточка недели</h2>${sh.url ? `<img class="share-img" src="${sh.url}" alt="Карточка недели">` : '<div class="empty">Рисую…</div>'}
     <p class="muted small">${sh.canShare ? 'Отправь друзьям через меню «Поделиться».' : 'Зажми картинку и выбери «Сохранить» или «Поделиться».'}</p>
-    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="share-send">Поделиться</button>' : ''}<button class="btn ghost grow" data-a="share-copy">Скопировать текстом</button></div>
-    <button class="btn ghost" data-a="close-sheet">Закрыть</button>`);
+    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="share-send">Поделиться</button>' : ''}<button class="btn ghost grow" data-a="share-copy">Скопировать текстом</button></div>`);
   if (sh.type === 'import') return sheetWrap('Восстановление', `<h2>Восстановить из копии</h2><p class="muted small">Выбери файл копии или вставь её текст. Текущие данные заменятся.</p>
     <input type="file" id="imp-file" accept=".json,application/json,text/plain"><textarea id="imp-text" placeholder='{"v":2, ...}'></textarea>
-    <button class="btn" data-a="import">Восстановить</button><button class="btn ghost" data-a="close-sheet">Отмена</button>`);
+    <button class="btn" data-a="import">Восстановить</button>`);
   if (sh.type === 'export') return sheetWrap('Копия', `<h2>Резервная копия</h2><p class="muted small">Скопируй текст и сохрани в заметки или отправь себе.</p>
     <textarea id="exp-text" readonly>${esc(JSON.stringify(S))}</textarea>
-    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="export-share">Отправить файлом</button>' : ''}<button class="btn ghost grow" data-a="export-copy">Скопировать</button></div>
-    <button class="btn ghost" data-a="close-sheet">Закрыть</button>`);
+    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="export-share">Отправить файлом</button>' : ''}<button class="btn ghost grow" data-a="export-copy">Скопировать</button></div>`);
   if (sh.type === 'proof') return sheetWrap('Фото', `<h2>Нужно фото</h2><p class="muted small">Камера откроется сразу, галерея не подойдёт. Фото хранится только на телефоне 2 недели.</p>
     <button class="btn" data-a="photo-take">${ICON.cam} Сфотографировать</button>
     ${sh.target === 'ch' ? '' : '<button class="btn ghost" data-a="photo-skip">Без фото: половина опыта, без монет</button>'}
-    <button class="linkbtn" data-a="close-sheet">Отмена</button>`);
+    `);
   if (sh.type === 'text') { const q = Q[sh.id]; return sheetWrap(q.title, `<h2>${esc(q.title)}</h2><p class="muted small">${esc(q.hint)}</p>
     <textarea id="txt" class="plain" placeholder="Пиши как есть" maxlength="600">${esc(sh.draft || '')}</textarea>
     <p class="muted small">Минимум ${q.minLen} символов. Сейчас: <span id="txt-n" class="mono">${(sh.draft || '').length}</span></p>
-    <button class="btn" data-a="text-save" data-id="${q.id}">Записать</button><button class="linkbtn" data-a="close-sheet">Отмена</button>`); }
+    <button class="btn" data-a="text-save" data-id="${q.id}">Записать</button>`); }
   if (sh.type === 'time') { const q = Q[sh.id]; return sheetWrap('Время', `<h2>${q.id === 'wake' ? 'Во сколько встал?' : 'Во сколько лёг?'}</h2>
     <p class="muted small">Только на сегодня и только в пределах окна. Отметка в будущем не засчитается.</p>
     <input type="time" id="t-val" value="${q.id === 'wake' ? S.settings.wake : S.settings.bed}">
-    <button class="btn" data-a="time-save" data-id="${q.id}">Сохранить</button><button class="linkbtn" data-a="close-sheet">Отмена</button>`); }
+    <button class="btn" data-a="time-save" data-id="${q.id}">Сохранить</button>`); }
   if (sh.type === 'fix') {
     const y = addDays(t, -1);
     const list = activeQuests().filter(q => activeOn(q.id, y) && !doneOn(q.id, y) && q.kind !== 'smoke');
     return sheetWrap('Исправление', `<h2>Отметить за вчера</h2><p class="muted small">Одно исправление в неделю. Засчитается вполсилы и без монет. Выбери один квест.</p>
       ${list.map(q => `<button class="btn ghost" data-a="fix" data-id="${q.id}">${esc(q.title)}</button>`).join('')}
-      <button class="linkbtn" data-a="close-sheet">Отмена</button>`);
+      `);
   }
   if (sh.type === 'nosleep') { const sel = sh.tags || []; const nk = nightKey(); return sheetWrap('Не ложился', `<h2>Не ложился спать</h2>
     <p class="muted small">Запишется на ночь ${fmtDay(nk)} → ${fmtDay(addDays(nk, 1))}. Без штрафа, просто чтобы видеть в отчёте.</p>
     <div class="chips">${NOSLEEP_TAGS.map(tg => `<button class="pill${sel.includes(tg) ? ' on' : ''}" data-a="ns-tag" data-t="${esc(tg)}">${esc(tg)}</button>`).join('')}</div>
     <input type="text" id="ns-text" placeholder="Что было? Одна строка" maxlength="160" value="${esc(sh.text || '')}">
-    <button class="btn" data-a="nosleep-save">Записать</button><button class="linkbtn" data-a="close-sheet">Отмена</button>`); }
+    <button class="btn" data-a="nosleep-save">Записать</button>`); }
+  if (sh.type === 'confirm') return sheetWrap(sh.title, `<h2>${esc(sh.title)}</h2>${sh.text ? `<p class="muted">${esc(sh.text)}</p>` : ''}
+    <button class="btn danger-fill" data-a="confirm-yes">${esc(sh.yes || 'Удалить')}</button>`);
   if (sh.type === 'boss') {
     if (!sh.d) return sheetWrap('Новый босс', `<h2>Новый босс</h2><p class="muted small">Выбери тип. У каждого свой способ наносить урон.</p>
       <div class="btypes">${BOSS_TYPES.map(T => `<button class="btype" data-stat="${T.stat}" data-a="boss-pick" data-t="${T.id}"><b>${esc(T.name)}</b><span class="muted small">${esc(T.desc)}</span></button>`).join('')}</div>
-      <button class="linkbtn" data-a="close-sheet">Отмена</button>`);
+      `);
     return sheetWrap('Новый босс', `<span class="label">Новый босс · ${esc(BT[sh.d.type].name)}</span><h2>${esc(BT[sh.d.type].desc)}</h2>
       ${bossForm(sh.d, 'bf')}
       <button class="btn" data-a="boss-save">Создать босса</button><button class="linkbtn" data-a="boss-new">Другой тип</button>`);
@@ -1250,10 +1245,10 @@ function viewSheet() {
   if (sh.type === 'sprint') return sheetWrap('Детектор', `<span class="label">Детектор спринт-кликера</span><h2>Три отметки меньше чем за минуту</h2>
     <p>Всё по-честному? Бывает, что закрываешь вечер разом. Но если накликал — лучше снять сейчас.</p>
     <p class="muted small">Если неделя наберёт ${SPRINT_FLAG} таких «по-честному», она получит ⚠: ачивки заморозятся, а на карточке для друзей будет видно.</p>
-    <button class="btn" data-a="sprint-keep">Да, всё сделал</button><button class="btn ghost" data-a="sprint-undo">Накликал, сними эти отметки</button>`);
+    <button class="btn" data-a="sprint-keep">Да, всё сделал</button><button class="btn ghost" data-a="sprint-undo">Накликал, сними эти отметки</button>`, true);
   if (sh.type === 'ics') return sheetWrap('Календарь', `<h2>Напоминание в Календарь</h2>
     <p class="muted small">Должен открыться файл календаря: нажми «Добавить все». Если ничего не произошло — нажми «Отправить файлом» и выбери «Календарь», либо создай напоминание вручную: Напоминания → Новое → Повтор: ежедневно.</p>
-    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="ics-share">Отправить файлом</button>' : ''}<button class="btn ghost grow" data-a="close-sheet">Готово</button></div>`);
+    <div class="row">${sh.canShare ? '<button class="btn grow" data-a="ics-share">Отправить файлом</button>' : ''}</div>`);
   return '';
 }
 
@@ -1261,13 +1256,14 @@ function render() {
   applyTheme();
   const root = document.getElementById('app');
   const tabbar = document.getElementById('tabbar');
-  if (ui.guide !== null && ui.guide < GUIDE.length) { root.innerHTML = viewGuide(ui.guide, S ? 'Понял' : 'Понял, к анкете'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = S ? '' : viewSheet(); return; }
+  if (ui.guide !== null && ui.guide < GUIDE.length) { root.innerHTML = viewGuide(ui.guide, S ? 'Понял' : 'Понял, к анкете'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = S ? '' : viewSheet(); syncLock(); return; }
   if (!S && !ui.wiz) ui.wiz = newWiz();
-  if (ui.wiz) { root.innerHTML = viewWizard(); tabbar.hidden = true; document.getElementById('sheet').innerHTML = viewSheet(); return; }
+  if (ui.wiz) { root.innerHTML = viewWizard(); tabbar.hidden = true; document.getElementById('sheet').innerHTML = viewSheet(); syncLock(); return; }
   tabbar.hidden = false;
   root.innerHTML = ui.tab === 'quests' ? viewQuests() : ui.tab === 'week' ? viewWeek() : ui.tab === 'report' ? viewReport() : ui.tab === 'me' ? viewMe() : viewToday();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === ui.tab));
   document.getElementById('sheet').innerHTML = viewSheet();
+  syncLock();
   if (ui.tab === 'report') loadPhotos();
   tick();
 }
@@ -1380,13 +1376,45 @@ function completeWithProof(target, proof) {
   afterChange(px, pc);
 }
 
+/* ================= листы: закрытие, свайп, блок фона ================= */
+function closeSheet() {
+  const sh = ui.sheet; if (!sh || sh.type === 'sprint') return;
+  if (sh.type === 'whatsnew' && S) { S.seenVersion = APP_VERSION; save(); }
+  ui.sheet = null; render();
+}
+let lockY = null;
+function syncLock() {
+  const on = !!document.querySelector('.sheet');
+  if (on && lockY === null) { lockY = window.scrollY; document.body.style.top = `-${lockY}px`; document.body.classList.add('locked'); }
+  else if (!on && lockY !== null) { document.body.classList.remove('locked'); document.body.style.top = ''; window.scrollTo(0, lockY); lockY = null; }
+}
+let drag = null;
+document.addEventListener('touchstart', e => {
+  const sh = e.target.closest('.sheet'); if (!sh || sh.classList.contains('locked-sheet')) return;
+  if (sh.scrollTop > 0 && !e.target.closest('.grabber')) return;
+  drag = { sh, y: e.touches[0].clientY, dy: 0 };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!drag) return;
+  drag.dy = Math.max(0, e.touches[0].clientY - drag.y);
+  if (drag.dy > 0) { drag.sh.style.transition = 'none'; drag.sh.style.transform = `translateY(${drag.dy}px)`; e.preventDefault(); }
+}, { passive: false });
+document.addEventListener('touchend', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  d.sh.style.transition = 'transform .2s ease';
+  if (d.dy > 90) { d.sh.style.transform = 'translateY(100%)'; setTimeout(closeSheet, 180); }
+  else d.sh.style.transform = '';
+});
+function confirmAsk(title, text, yes, act, id) { ui.sheet = { type: 'confirm', title, text, yes, act, id }; render(); }
+
 /* ================= действия ================= */
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-a]'); if (!el) return;
   const a = el.dataset.a;
   if (a === 'close-sheet' && e.target !== el && el.classList.contains('sheet-bg')) return;
   if (a === 'whatsnew-ok') { if (S) { S.seenVersion = APP_VERSION; save(); } ui.sheet = null; render(); return; }
-  if (a === 'close-sheet') { if (ui.sheet?.type === 'sprint' || ui.sheet?.type === 'whatsnew') return; ui.sheet = null; render(); return; }
+  if (a === 'close-sheet') { closeSheet(); return; }
   if (a === 'open-import') { ui.sheet = { type: 'import' }; render(); return; }
   if (a === 'import') return doImport();
   if (a === 'guide-next') {
@@ -1400,7 +1428,7 @@ document.addEventListener('click', async e => {
   const t = todayKey(), px = xpAll().total, pc = coins();
 
   switch (a) {
-    case 'tab': ui.tab = el.dataset.t; ui.week = null; ui.confirmReset = false; ui.confirmDrop = null; window.scrollTo(0, 0); render(); return;
+    case 'tab': ui.tab = el.dataset.t; ui.week = null; window.scrollTo(0, 0); render(); return;
     case 'go-shop': ui.tab = 'me'; render(); document.getElementById('shop')?.scrollIntoView({ block: 'start' }); return;
     case 'guide-open': ui.guide = 0; window.scrollTo(0, 0); render(); return;
     case 'wiz-open': ui.wiz = editWiz(); window.scrollTo(0, 0); render(); return;
@@ -1511,9 +1539,16 @@ document.addEventListener('click', async e => {
       if (activeQuests().length >= slotsFor(levelOf(xpAll().total).L)) { toast('Свободных слотов нет'); return; }
       activate(el.dataset.id, t); save(); render(); toast(`Взят квест: ${Q[el.dataset.id].title}`, true); return;
     }
-    case 'q-drop': ui.confirmDrop = el.dataset.id; render(); return;
-    case 'q-drop-no': ui.confirmDrop = null; render(); return;
-    case 'q-drop-yes': deactivate(ui.confirmDrop, t); ui.confirmDrop = null; save(); render(); toast('Квест убран, слот свободен'); return;
+    case 'q-drop': confirmAsk(`Убрать «${Q[el.dataset.id].title}»?`, 'Слот освободится. Если вернёшь квест, прогресс до автопилота начнётся заново.', 'Убрать квест', 'q-drop', el.dataset.id); return;
+    case 'confirm-yes': {
+      const { act, id } = ui.sheet; ui.sheet = null;
+      if (act === 'q-drop') { deactivate(id, t); toast('Квест убран, слот свободен'); }
+      if (act === 'boss-del') { S.bosses = S.bosses.filter(b => b.id !== id); S.events = S.events.filter(e => e.id !== id); toast('Босс удалён'); }
+      if (act === 'reward-del') { S.shop.rewards = S.shop.rewards.filter(r => r.id !== id); toast('Награда удалена'); }
+      if (act === 'side-del') { S.sideList = S.sideList.filter(x => x !== id); S.custom = S.custom.filter(c => c.id !== id); toast('Сайд-квест удалён'); }
+      if (act === 'reset') { try { localStorage.removeItem(STORE_KEY); } catch (err) { /* */ } S = null; ui = { tab: 'today', week: null, sheet: null, guide: 0, wiz: null, journalN: 14 }; render(); return; }
+      save(); render(); return;
+    }
     case 'ics': {
       const id = el.dataset.id, v = val('rm-' + id); if (!v) { toast('Сначала выбери время напоминания'); return; }
       S.settings.remind[id] = v; save(); openIcs([id]); return;
@@ -1547,9 +1582,7 @@ document.addEventListener('click', async e => {
       if (b.defeated) { b.defeated = null; S.events = S.events.filter(e => !(e.type === 'bosskill' && e.id === b.id)); }
       save(); render(); toast('Отменено'); return;
     }
-    case 'boss-del': ui.bossDel = el.dataset.id; render(); return;
-    case 'boss-del-no': ui.bossDel = null; render(); return;
-    case 'boss-del-yes': S.bosses = S.bosses.filter(b => b.id !== el.dataset.id); S.events = S.events.filter(e => e.id !== el.dataset.id); ui.bossDel = null; save(); render(); toast('Босс удалён'); return;
+    case 'boss-del': { const b = S.bosses.find(x => x.id === el.dataset.id); confirmAsk(`Удалить босса «${b.name}»?`, 'Вместе с историей ударов. Опыт за него тоже пропадёт.', 'Удалить босса', 'boss-del', b.id); return; }
     case 'boss-new': ui.sheet = { type: 'boss', d: null }; render(); return;
     case 'boss-pick': ui.sheet = { type: 'boss', d: { type: el.dataset.t } }; render(); return;
     case 'boss-save': {
@@ -1576,7 +1609,8 @@ document.addEventListener('click', async e => {
       if (!title) { toast('Напиши, что за награда'); return; }
       S.shop.rewards.push({ id: 'r' + Date.now(), title, price }); save(); render(); toast('Награда добавлена'); return;
     }
-    case 'reward-del': S.shop.rewards = S.shop.rewards.filter(r => r.id !== el.dataset.id); save(); render(); return;
+    case 'reward-del': { const r = S.shop.rewards.find(x => x.id === el.dataset.id); confirmAsk(`Удалить награду «${r.title}»?`, 'Уже купленные останутся в истории.', 'Удалить награду', 'reward-del', r.id); return; }
+    case 'side-del': { const sq = allSide().find(x => x.id === el.dataset.id); confirmAsk(`Удалить «${sq.title}»?`, 'Сайд-квест пропадёт из списка. Опыт за уже выполненные останется.', 'Удалить', 'side-del', sq.id); return; }
     case 'open-week': ui.tab = 'week'; ui.week = el.dataset.w; if (el.dataset.w === addDays(weekOf(t), -7)) S.seenWeek = el.dataset.w; save(); window.scrollTo(0, 0); render(); return;
     case 'journal-more': ui.journalN += 14; render(); return;
     case 'csv': {
@@ -1603,9 +1637,7 @@ document.addEventListener('click', async e => {
     case 'export-share': try { await navigator.share({ files: [ui.sheet.file] }); S.lastBackup = t; save(); } catch (err) { if (err?.name !== 'AbortError') toast('Не получилось. Скопируй текстом'); } return;
     case 'export-copy': { const ta = document.getElementById('exp-text'); if (!(await copyText(ta.value))) { ta.focus(); ta.select(); } S.lastBackup = t; save(); return; }
     case 'backup-later': S.lastBackup = addDays(t, -6); save(); render(); return;
-    case 'reset-ask': ui.confirmReset = true; render(); return;
-    case 'reset-no': ui.confirmReset = false; render(); return;
-    case 'reset-yes': try { localStorage.removeItem(STORE_KEY); } catch (err) { /* */ } S = null; ui = { tab: 'today', week: null, sheet: null, guide: 0, wiz: null, journalN: 14 }; render(); return;
+    case 'reset-ask': confirmAsk('Удалить весь прогресс?', 'Опыт, серия, записи и настройки удалятся без возврата. Сначала лучше сохранить резервную копию.', 'Да, удалить всё', 'reset'); return;
   }
 });
 document.addEventListener('change', e => { const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
