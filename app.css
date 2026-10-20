@@ -502,12 +502,12 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .row.nowrap { flex-wrap: nowrap; }
 
 /* ================= многостраничные экраны ================= */
-.pager { padding-bottom: 24px; }
-.pager-nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  background: linear-gradient(to top, var(--bg) 70%, color-mix(in srgb, var(--bg) 0%, transparent));
-  padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-}
+.pager-screen { position: fixed; inset: 0; z-index: 15; display: flex; flex-direction: column; background: var(--bg); }
+.pager-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+.pager-wrap { max-width: 540px; margin: 0 auto; }
+.pager-nav { flex: none; border-top: 1px solid var(--line); background: var(--bg);
+  padding: 12px max(16px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
 .pager-in { max-width: 540px; margin: 0 auto; display: grid; grid-template-columns: 112px 1fr; gap: 10px; }
 .pager-in > span:empty { display: block; }
 .in-next { animation: inNext .28s ease both; }

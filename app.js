@@ -601,7 +601,9 @@ function viewGuide(step, final) {
 
 /* Многостраничные экраны: кнопки всегда в одном месте внизу, листание свайпом */
 function pagerNav(content, left, right) {
-  return `${content}<nav class="pager-nav"><div class="pager-in">${left}${right}</div></nav>`;
+  // Экран на всю высоту: содержимое прокручивается внутри, кнопки всегда прижаты к низу
+  return `<div class="pager-screen"><div class="pager-scroll"><div class="pager-wrap">${content}</div></div>
+    <nav class="pager-nav"><div class="pager-in">${left}${right}</div></nav></div>`;
 }
 let swipe = null;
 document.addEventListener('touchstart', e => {
@@ -1959,8 +1961,17 @@ document.addEventListener('touchend', e => { const now = Date.now(); if (now - l
 document.addEventListener('touchmove', e => {
   if (e.touches.length > 1) { e.preventDefault(); return; }
   if (document.body.classList.contains('locked') && !e.target.closest('.sheet')) { e.preventDefault(); return; }
+  const inner = e.target.closest('.pager-scroll');
+  if (inner) { if (inner.scrollHeight <= inner.clientHeight + 1) e.preventDefault(); return; }
   if (document.documentElement.scrollHeight <= window.innerHeight + 1 && !e.target.closest('.sheet, .xscroll, textarea')) e.preventDefault();
 }, { passive: false });
+
+// После клавиатуры iOS иногда оставляет сдвинутый экран, и закреплённые элементы «плавают».
+// Возвращаем раскладку на место, когда поле теряет фокус.
+document.addEventListener('focusout', e => {
+  if (!e.target.matches?.('input, textarea, select')) return;
+  setTimeout(() => { if (!document.activeElement?.matches('input, textarea, select')) window.scrollTo(window.scrollX, window.scrollY); }, 80);
+});
 
 /* ================= запуск ================= */
 document.getElementById('tabbar').innerHTML = `<nav class="tabbar-in">${[['today', 'Сегодня'], ['quests', 'Квесты'], ['week', 'Неделя'], ['report', 'Отчёт'], ['me', 'Профиль']].map(([t, n]) => `<button class="tab" data-a="tab" data-t="${t}">${ICON[t]}<span>${n}</span></button>`).join('')}</nav>`;
