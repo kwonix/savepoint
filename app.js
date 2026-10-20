@@ -765,7 +765,7 @@ function actionBtn(kind, q, done, win, extra = '') {
 function questCard(q, t) {
   const d = peekDay(t), rec = d.q[q.id], done = !!rec;
   const win = windowFor(q, t);
-  let sub = q.hint, extra = '';
+  let sub = q.afterWake && !activeOn('wake', t) ? 'Сразу после подъёма, до телефона. Отметить можно до 14:00.' : q.hint, extra = '';
   const gain = rec ? ` · +${Math.round(20 * rec.v)} опыта${recCoins(rec) ? `, +${recCoins(rec)} монет` : ''}` : '';
   const proofTag = rec?.proof === 'photo' ? ' · 📷' : rec?.proof === 'timer' ? ' · ⏱' : rec?.fix ? ' · исправление' : '';
   const tg = sleepTargets(t);
