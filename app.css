@@ -186,6 +186,7 @@ body::before {
 }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .pill {
+  text-align: left;
   padding: 8px 12px; border-radius: 99px; border: 1px solid var(--line);
   background: transparent; font-size: .85rem;
 }

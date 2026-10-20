@@ -61,12 +61,12 @@ function fresh(d) {
   const t = todayKey();
   return migrate({
     v: STATE_VERSION, created: t, profile: { name: (d.name || '').trim() }, profileDone: true,
-    settings: { wake: d.wake || '09:00', bed: d.bed || '01:00', tone: d.tone || 'roast', theme: d.theme || 'auto', remind: {} },
+    settings: { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme, remind: {} },
     bosses: (d.bosses || []).map(b => makeBoss(b, t)),
     quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
-    days: {}, side: {}, sideList: d.side || SIDE_DEFAULT.slice(), custom: d.custom || [], events: [], guide: true,
+    days: {}, side: {}, sideList: d.side || [], custom: d.custom || [], events: [], guide: true,
     seenVersion: APP_VERSION, lastBackup: t,
-    shop: { rewards: d.rewards || DEFAULT_REWARDS.map(r => ({ ...r })), bought: [] },
+    shop: { rewards: d.rewards || [], bought: [] },
   });
 }
 function migrate(s) {
@@ -395,7 +395,7 @@ const fmtN = (n, unit) => { const r = Math.round(n * 10) / 10; return unit === '
 function makeBoss(d, t) {
   const T = BT[d.type];
   return { id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: d.type,
-    name: (d.name || '').trim() || T.defName || T.name, stat: T.pickStat ? (d.stat || 'mind') : T.stat,
+    name: (d.name || '').trim() || T.name, stat: T.pickStat ? (d.stat || 'mind') : T.stat,
     unit: T.id === 'custom' ? ((d.unit || '').trim() || 'раз') : T.unit,
     total: num(d.total), weekly: num(d.weekly), start: num(d.start), target: num(d.target), heal: num(d.heal) || 3,
     hits: [], created: t, defeated: null };
@@ -578,8 +578,8 @@ function animatePager() {
 /* ================= экраны ================= */
 const WIZ = ['name', 'day', 'quests', 'bosses', 'side', 'rewards', 'style'];
 function newWiz() {
-  return { step: 0, mode: 'new', d: { name: '', wake: '09:00', bed: '01:00', quests: ['wake', 'shower'], bosses: [], keep: [],
-    side: SIDE_DEFAULT.slice(), custom: [], rewards: DEFAULT_REWARDS.map(r => ({ ...r, on: true })), tone: 'roast', theme: 'auto' } };
+  return { step: 0, mode: 'new', d: { name: '', wake: '', bed: '', quests: [], bosses: [], keep: [],
+    side: [], custom: [], rewards: DEFAULT_REWARDS.map(r => ({ ...r, on: false })), tone: null, theme: null } };
 }
 function editWiz() {
   return { step: 0, mode: 'edit', d: { name: S.profile.name || '', wake: S.settings.wake, bed: S.settings.bed,
@@ -595,7 +595,9 @@ const wizQuestLimit = () => ui.wiz.mode === 'new' ? 2 : slotsFor(levelOf(xpAll()
 function wizProblem() {
   const d = ui.wiz.d, step = WIZ[ui.wiz.step];
   if (step === 'name' && !d.name.trim()) return 'Напиши, как к тебе обращаться';
+  if (step === 'day' && (!d.wake || !d.bed)) return 'Укажи время подъёма и отбоя';
   if (step === 'quests' && !d.quests.length) return 'Выбери хотя бы один квест';
+  if (step === 'style' && (!d.tone || !d.theme)) return 'Выбери тон сводки и тему';
   if (step === 'bosses') { for (const b of d.bosses) { const e = bossProblem(b); if (e) return `${BT[b.type].name}: ${e.toLowerCase()}`; } }
   return '';
 }
@@ -607,15 +609,15 @@ function viewWizard() {
   if (step === 'name') body = head('Как тебя зовут?', 'Так приложение будет к тебе обращаться. Имя увидят только те, кому ты сам отправишь карточку недели.')
     + `<input type="text" data-wf="name" id="wz-name" maxlength="24" placeholder="Имя или ник" value="${esc(d.name)}" autocomplete="given-name">`;
   else if (step === 'day') body = head('Твой режим', 'От этого зависят окна отметок: подъём засчитывается полностью в течение часа от цели, отбой — до цели.')
-    + `<div class="grid2"><label class="field"><span>Во сколько встаёшь</span><input type="time" data-wf="wake" value="${d.wake}"></label>
-       <label class="field"><span>Во сколько ложишься</span><input type="time" data-wf="bed" value="${d.bed}"></label></div>
+    + `<div class="grid2"><label class="field"><span>Во сколько встаёшь</span><input type="time" data-wf="wake" value="${d.wake || ''}"></label>
+       <label class="field"><span>Во сколько ложишься</span><input type="time" data-wf="bed" value="${d.bed || ''}"></label></div>
        <p class="muted small">День в приложении заканчивается в 04:00. Если лёг в 2 ночи, это засчитается во вчерашний день.</p>`;
   else if (step === 'quests') {
     const lim = wizQuestLimit();
-    body = head('С чего начнём', `Выбери до ${lim} ${plural(lim, 'квеста', 'квестов', 'квестов')} на каждый день. Остальные возьмёшь позже, когда откроются слоты. Мало — это специально.`)
+    body = head('С чего начнём', `Выбери сам до ${lim} ${plural(lim, 'квеста', 'квестов', 'квестов')} на каждый день. Остальные возьмёшь позже, когда откроются слоты. Мало — это специально.`)
       + Object.entries(STATS).map(([sk, sv]) => `<div class="cat-head" data-stat="${sk}"><span class="chip">${sv.name}</span></div><div class="chips">${CATALOG.filter(q => q.stat === sk && qStatusSafe(q.id) !== 'auto').map(q =>
-        `<button class="pill${d.quests.includes(q.id) ? ' on' : ''}" data-a="wz-q" data-id="${q.id}">${esc(q.title)}${['wake', 'shower'].includes(q.id) && w.mode === 'new' ? ' ★' : ''}</button>`).join('')}</div>`).join('')
-      + `<p class="muted small">Выбрано: <b class="mono">${d.quests.length}/${lim}</b>${w.mode === 'new' ? ' · ★ — советую начать с них: режим тянет за собой всё остальное' : ''}</p>`;
+        `<button class="pill${d.quests.includes(q.id) ? ' on' : ''}" data-a="wz-q" data-id="${q.id}">${esc(q.title)}</button>`).join('')}</div>`).join('')
+      + `<p class="muted small">Выбрано: <b class="mono">${d.quests.length}/${lim}</b></p>`;
   } else if (step === 'bosses') {
     const kept = w.mode === 'edit' ? activeBosses() : [];
     const total = d.keep.length + d.bosses.length;
@@ -625,20 +627,20 @@ function viewWizard() {
       + d.bosses.map((b, i) => `<div class="card wb"><div class="section-head"><b>${esc(BT[b.type].name)}</b><button class="linkbtn" data-a="wz-bdel" data-i="${i}">убрать</button></div>${bossForm(b, 'wbk', i)}</div>`).join('')
       + (total < BOSS_LIMIT ? `<div class="label">Добавить${total ? ' ещё' : ''} · максимум ${BOSS_LIMIT}</div><div class="btypes">${BOSS_TYPES.map(T => `<button class="btype" data-stat="${T.stat}" data-a="wz-badd" data-t="${T.id}"><b>${esc(T.name)}</b><span class="muted small">${esc(T.desc)}</span></button>`).join('')}</div>` : `<p class="muted small">Это максимум: ${BOSS_LIMIT} босса одновременно.</p>`);
   } else if (step === 'side') {
-    body = head('Разовые дела', 'То, что давно откладываешь. Каждое дело делается один раз и даёт много опыта. Отметь нужные и добавь свои.')
+    body = head('Разовые дела', 'То, что давно откладываешь. Каждое дело делается один раз и даёт много опыта. Отметь, что нужно тебе, добавь своё или пропусти.')
       + `<div class="chips">${SIDE.map(sq => `<button class="pill${d.side.includes(sq.id) ? ' on' : ''}" data-a="wz-side" data-id="${sq.id}">${esc(sq.title)}</button>`).join('')}</div>`
       + (d.custom.length ? `<div class="label">Свои</div>${d.custom.map((c, i) => `<div class="side"><div class="side-title">${esc(c.title)}</div><button class="linkbtn" data-a="wz-cdel" data-i="${i}">убрать</button></div>`).join('')}` : '')
       + `<div class="row"><input type="text" class="grow" id="wz-ctitle" maxlength="80" placeholder="Своё дело, например: продлить паспорт"><button class="btn sm" data-a="wz-cadd">Добавить</button></div>`;
   } else if (step === 'rewards') {
-    body = head('Награды', 'За квесты капают монеты. Здесь решаешь, на что их тратить. Отдых по плану — часть игры, а не срыв.')
+    body = head('Награды', 'За квесты капают монеты. Реши сам, на что их тратить: отметь подходящие идеи или добавь свои. Отдых по плану — часть игры, а не срыв.')
       + d.rewards.map((r, i) => `<div class="side"><div style="min-width:0"><div class="side-title">${esc(r.title)}</div><span class="muted small mono">${r.price} монет</span></div>
-         <button class="pill${r.on ? ' on' : ''}" data-a="wz-rw" data-i="${i}">${r.on ? 'Беру' : 'Не надо'}</button></div>`).join('')
+         <button class="pill${r.on ? ' on' : ''}" data-a="wz-rw" data-i="${i}">${r.on ? 'Выбрано' : 'Выбрать'}</button></div>`).join('')
       + `<div class="grid2"><input type="text" id="wz-rtitle" maxlength="60" placeholder="Своя награда"><input type="number" id="wz-rprice" min="10" step="10" placeholder="Цена в монетах"></div>
          <button class="btn sm ghost" data-a="wz-radd" style="align-self:flex-start">Добавить награду</button>
          <p class="muted small">Ориентир: за обычный день набирается 30–60 монет.</p>`;
   } else {
-    body = head('Последнее', 'Как с тобой разговаривать и как выглядеть.')
-      + `<div class="field"><span>Тон недельной сводки</span><div class="seg"><button class="${d.tone === 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="roast">С подколом</button><button class="${d.tone !== 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="neutral">Нейтральный</button></div></div>
+    body = head('Последнее', 'Выбери, как с тобой разговаривать и как выглядеть.')
+      + `<div class="field"><span>Тон недельной сводки</span><div class="seg"><button class="${d.tone === 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="roast">С подколом</button><button class="${d.tone === 'neutral' ? 'on' : ''}" data-a="wz-tone" data-v="neutral">Нейтральный</button></div></div>
          <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${d.theme === v ? 'on' : ''}" data-a="wz-theme" data-v="${v}">${n}</button>`).join('')}</div></div>
          <ul class="glist"><li><b>Напоминания</b> поставишь во вкладке «Квесты»: время у квеста → «В Календарь».</li>
          <li><b>Резервная копия.</b> Раз в неделю приложение напомнит её сохранить.</li>
@@ -890,7 +892,7 @@ function bossForm(d, prefix, idx) {
   // поля для создания босса: в анкете и в листе «Новый босс»
   const T = BT[d.type];
   return `<div class="bform" data-stat="${T.stat}"${idx !== undefined ? ` data-bi="${idx}"` : ''}>
-    <label class="field"><span>Название босса</span><input type="text" maxlength="40" data-${prefix}="name" value="${esc(d.name ?? T.defName)}" placeholder="${esc(T.defName || 'Например: Курсовая')}"></label>
+    <label class="field"><span>Название босса</span><input type="text" maxlength="40" data-${prefix}="name" value="${esc(d.name ?? '')}" placeholder="${esc(T.defName ? 'например: ' + T.defName : 'например: Курсовая')}"></label>
     ${T.pickStat ? `<label class="field"><span>Характеристика</span><select data-${prefix}="stat">${Object.entries(STATS).map(([k, v]) => `<option value="${k}" ${(d.stat || 'mind') === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>` : ''}
     <div class="grid2">${T.fields.map(f => `<label class="field"><span>${esc(f.label)}</span><input ${f.text ? 'type="text" maxlength="12"' : `type="number" inputmode="decimal" min="0" step="${f.step || 1}"`} data-${prefix}="${f.k}" value="${esc(d[f.k] ?? '')}" placeholder="${esc(f.ph)}"></label>`).join('')}</div>
   </div>`;
@@ -1170,6 +1172,7 @@ function viewMe() {
   // магазин
   html += `<section class="card" id="shop"><div class="section-head"><h2>Магазин наград</h2><span class="coins static">${ICON.coin}<span class="mono">${bal}</span></span></div>
     <p class="muted small">Монеты дают за квесты, карты, вызовы и ачивки. Награды придумываешь сам. Отдых по плану — не срыв.</p>
+    ${S.shop.rewards.length ? '' : '<p class="muted small">Наград пока нет. Добавь свою ниже.</p>'}
     ${S.shop.rewards.map(r => `<div class="side"><div style="min-width:0"><div class="side-title">${esc(r.title)}</div><span class="muted small mono">${r.price} монет</span></div>
       <div class="row"><button class="btn sm" data-a="buy" data-id="${r.id}" ${bal < r.price ? 'disabled' : ''}>Купить</button><button class="xbtn" data-a="reward-del" data-id="${r.id}" aria-label="Удалить награду">×</button></div></div>`).join('')}
     <details><summary class="muted">Добавить свою награду</summary><div class="stack">
