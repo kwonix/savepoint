@@ -538,3 +538,14 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .btn svg circle { fill: none; }
 .sq { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .sq .pill { padding: 8px 4px; font-size: .74rem; text-align: center; }
+
+/* ================= оформление ================= */
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.swatch { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); text-align: left; position: relative; }
+.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.swatch.lockd { opacity: .45; }
+.sw-dot { width: 28px; height: 28px; border-radius: 50%; }
+.sw-n { font-size: .82rem; font-weight: 600; }
+.sw-l { position: absolute; top: 8px; right: 8px; font-size: .64rem; font-weight: 700; color: var(--muted); }
+.title-tag { display: inline-block; margin-top: 4px; font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
+.confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }

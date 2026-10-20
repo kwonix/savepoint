@@ -61,7 +61,7 @@ function fresh(d) {
   const t = todayKey();
   return migrate({
     v: STATE_VERSION, created: t, profile: { name: (d.name || '').trim() }, profileDone: true,
-    settings: { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme, remind: {} },
+    settings: { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme, palette: d.palette, perks: {}, remind: {} },
     bosses: (d.bosses || []).map(b => makeBoss(b, t)),
     quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
     days: {}, side: {}, sideList: d.side || [], custom: d.custom || [], events: [], guide: true,
@@ -82,6 +82,7 @@ function migrate(s) {
   if (!s.sideList) s.sideList = [...new Set([...SIDE_DEFAULT, ...Object.keys(s.side || {}).filter(id => SIDE.some(x => x.id === id))])];
   s.lastBackup ||= s.created;
   s.sleep ||= { enabled: false, checkin: false, shift: null };
+  s.settings.palette ||= 'gold'; s.settings.perks ||= {};
   s.quests ||= {}; s.days ||= {}; s.side ||= {}; s.custom ||= []; s.events ||= [];
   s.timers ||= {}; s.weeks ||= {}; s.ach ||= {}; s.sprints ||= []; s.fixes ||= {};
   s.shop ||= { rewards: DEFAULT_REWARDS.map(r => ({ ...r })), bought: [] };
@@ -504,6 +505,8 @@ function afterChange(prevXp, prevCoins) {
   const notes = evolve();
   const got = checkAch();
   const now = xpAll(), c = coins();
+  const tk = todayKey(), aq = activeQuests();
+  if (perkOn('confetti') && aq.length && aq.every(q => doneOn(q.id, tk)) && !peekDay(tk).cheered) { day(tk).cheered = true; setTimeout(confetti, 250); }
   const L = levelOf(now.total).L;
   save(); render();
   const bits = [];
@@ -513,7 +516,10 @@ function afterChange(prevXp, prevCoins) {
   let delay = 500;
   if (L > (S.lastLevel || 1)) {
     const slotsUp = slotsFor(L) > slotsFor(S.lastLevel || 1);
+    const newPal = PALETTES.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
+    const newPerk = PERKS.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
     S.lastLevel = L; save();
+    if (newPal.length || newPerk.length) setTimeout(() => toast(`Открыто: ${[...newPal.map(n => 'тема «' + n + '»'), ...newPerk.map(n => 'фишка «' + n + '»')].join(', ')}. Включи в Профиле`, true), delay + 800);
     setTimeout(() => toast(`Новый уровень: ${L}${slotsUp ? '. Открыт новый слот для квеста' : ''}`, true), delay); delay += 800;
   }
   if (got.length) { setTimeout(() => toast(got.length === 1 ? `Ачивка: ${got[0].title}` : `Новые ачивки: ${got.map(a => a.title).join(', ')}`, true), delay); delay += 800; }
@@ -604,13 +610,13 @@ function animatePager() {
 const WIZ = ['name', 'day', 'quests', 'bosses', 'side', 'rewards', 'style'];
 function newWiz() {
   return { step: 0, mode: 'new', d: { name: '', wake: '', bed: '', quests: [], bosses: [], keep: [],
-    side: [], custom: [], rewards: DEFAULT_REWARDS.map(r => ({ ...r, on: false })), tone: null, theme: null } };
+    side: [], custom: [], rewards: DEFAULT_REWARDS.map(r => ({ ...r, on: false })), tone: null, theme: null, palette: null } };
 }
 function editWiz() {
   return { step: 0, mode: 'edit', d: { name: S.profile.name || '', wake: S.settings.wake, bed: S.settings.bed,
     quests: activeQuests().map(q => q.id), bosses: [], keep: activeBosses().map(b => b.id), sleep: !!S.sleep?.enabled,
     side: S.sideList.slice(), custom: S.custom.map(c => ({ ...c })), rewards: S.shop.rewards.map(r => ({ ...r, on: true })),
-    tone: S.settings.tone, theme: S.settings.theme || 'auto' } };
+    tone: S.settings.tone, theme: S.settings.theme || 'auto', palette: S.settings.palette || 'gold' } };
 }
 function wizSet(path, v) {
   const d = ui.wiz?.d; if (!d) return;
@@ -623,7 +629,7 @@ function wizProblem() {
   if (step === 'day' && (!d.wake || !d.bed)) return 'Укажи время подъёма и отбоя';
   if (step === 'day' && typeof d.sleep !== 'boolean') return 'Выбери, нужен ли режим сна';
   if (step === 'quests' && !d.quests.length) return 'Выбери хотя бы один квест';
-  if (step === 'style' && (!d.tone || !d.theme)) return 'Выбери тон сводки и тему';
+  if (step === 'style' && (!d.tone || !d.theme || !d.palette)) return 'Выбери тон сводки, тему и цвет';
   if (step === 'bosses') { for (const b of d.bosses) { const e = bossProblem(b); if (e) return `${BT[b.type].name}: ${e.toLowerCase()}`; } }
   return '';
 }
@@ -669,7 +675,8 @@ function viewWizard() {
     body = head('Последнее', 'Выбери, как с тобой разговаривать и как выглядеть.')
       + `<div class="field"><span>Тон недельной сводки</span><div class="seg"><button class="${d.tone === 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="roast">С подколом</button><button class="${d.tone === 'neutral' ? 'on' : ''}" data-a="wz-tone" data-v="neutral">Нейтральный</button></div></div>
          <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${d.theme === v ? 'on' : ''}" data-a="wz-theme" data-v="${v}">${n}</button>`).join('')}</div></div>
-         <ul class="glist"><li><b>Напоминания</b> поставишь во вкладке «Квесты»: время у квеста → «В Календарь».</li>
+         <div class="field"><span>Цвет</span>${swatches(d.palette, 'wz-pal', ui.wiz.mode === 'new' ? 1 : levelNow())}</div>
+         <ul class="glist"><li><b>Новые цвета</b> и фишки открываются с уровнем.</li><li><b>Напоминания</b> поставишь во вкладке «Квесты»: время у квеста → «В Календарь».</li>
          <li><b>Резервная копия.</b> Раз в неделю приложение напомнит её сохранить.</li>
          <li><b>Всё это можно поменять</b> потом: Профиль → «Изменить анкету».</li></ul>`;
   }
@@ -686,7 +693,7 @@ function wizApply() {
     S = fresh({ ...d, rewards }); evolve(); save(); ui.wiz = null; ui.tab = 'today'; window.scrollTo(0, 0); render();
     toast(`${d.name.trim()}, сохранение создано. Первые квесты ждут`, true); return;
   }
-  S.profile.name = d.name.trim(); Object.assign(S.settings, { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme });
+  S.profile.name = d.name.trim(); Object.assign(S.settings, { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme, palette: d.palette });
   if (d.sleep && !S.sleep.enabled) S.sleep.checkin = true;
   S.sleep.enabled = d.sleep;
   for (const q of activeQuests()) if (!d.quests.includes(q.id)) deactivate(q.id, t);
@@ -706,7 +713,7 @@ function viewHeader() {
     <div class="top-row">
       <div style="min-width:0">
         <div class="date-line">${fmtDayLong(t)}</div>
-        <h1>${greet()}${S.profile.name ? `, ${esc(S.profile.name)}` : ''}</h1>
+        <h1>${greet()}${S.profile.name ? `, ${esc(S.profile.name)}` : ''}</h1>${titleName() ? `<span class="title-tag">${esc(titleName())}</span>` : ''}
       </div>
       <div class="lvl" aria-label="Уровень ${lv.L}"><small>ур.</small><b>${lv.L}</b></div>
     </div>
@@ -1209,6 +1216,28 @@ function csv() {
   return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 }
 
+function swatches(sel, act, L) {
+  return `<div class="swatches">${PALETTES.map(p => {
+    const lock = L < p.level;
+    return `<button class="swatch${sel === p.id ? ' on' : ''}${lock ? ' lockd' : ''}" ${lock ? 'disabled' : `data-a="${act}" data-v="${p.id}"`} aria-label="${p.name}${lock ? ', откроется на уровне ' + p.level : ''}">
+      <span class="sw-dot" style="background:linear-gradient(135deg, ${p.dark.accent} 0 50%, ${p.light.accent} 50% 100%)"></span><span class="sw-n">${p.name}</span>${lock ? `<span class="sw-l">ур. ${p.level}</span>` : ''}</button>`;
+  }).join('')}</div>`;
+}
+function looksSettings() {
+  const st = S.settings, L = levelNow();
+  let h = `<section class="card" id="looks"><h2>Оформление</h2>
+    <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${(st.theme || 'auto') === v ? 'on' : ''}" data-a="theme" data-v="${v}">${n}</button>`).join('')}</div></div>
+    <div class="field"><span>Цвет</span>${swatches(st.palette || 'gold', 'palette', L)}</div>
+    <div class="label">Фишки за уровень</div>`;
+  for (const p of PERKS) {
+    const lock = L < p.level;
+    h += `<div class="kv"><span>${p.name}<br><span class="muted small">${lock ? `откроется на уровне ${p.level}` : p.desc}</span></span>${lock ? `<span class="badge">ур. ${p.level}</span>` : `<button class="toggle${st.perks[p.id] ? ' on' : ''}" data-a="perk" data-v="${p.id}" role="switch" aria-checked="${!!st.perks[p.id]}" aria-label="${p.name}"><i></i></button>`}</div>`;
+    if (p.id === 'title' && !lock && st.perks.title) h += `<div class="chips">${TITLES.filter(x => x.level <= L).map(x => `<button class="pill${st.title === x.id ? ' on' : ''}" data-a="title" data-v="${x.id}">${x.name}</button>`).join('')}</div>`;
+  }
+  return h + '</section>';
+}
+const titleName = () => perkOn('title') ? (TITLES.find(x => x.id === S.settings.title)?.name || '') : '';
+
 function sleepSettings() {
   const sl = S.sleep, plan = shiftPlan(), tg = sleepTargets();
   let h = `<section class="card" id="sleep-settings"><div class="section-head"><h2>Сон</h2><button class="toggle${sl.enabled ? ' on' : ''}" data-a="sleep-on" role="switch" aria-checked="${sl.enabled}" aria-label="Режим сна"><i></i></button></div>`;
@@ -1249,10 +1278,10 @@ function viewMe() {
     <div class="grid2"><label class="field"><span>Подъём</span><input id="s-wake" type="time" value="${st.wake}"></label>
     <label class="field"><span>Отбой</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
     <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone !== 'roast' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
-    <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${(st.theme || 'auto') === v ? 'on' : ''}" data-a="theme" data-v="${v}">${n}</button>`).join('')}</div></div>
     <button class="btn sm" data-a="save-settings">Сохранить настройки</button>
     <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
 
+  html += looksSettings();
   html += sleepSettings();
   html += `<section class="card"><h2>Анкета</h2><p class="muted small">Имя, режим, квесты, боссы, разовые дела и награды.</p><button class="btn sm ghost" data-a="wiz-open" style="align-self:flex-start">Изменить анкету</button></section>`;
   html += `<section class="card"><h2>Как это работает</h2><p class="muted small">Правила, окна отметок и защита от накрутки.</p><button class="btn sm ghost" data-a="guide-open" style="align-self:flex-start">Открыть гайд</button></section>`;
@@ -1363,7 +1392,35 @@ function render() {
   if (ui.tab === 'report') loadPhotos();
   tick();
 }
+function paletteCss(p) {
+  const v = o => `--accent:${o.accent};--accent-text:${o.accentText};--on-accent:${o.onAccent};--bg:${o.bg};--surface:${o.surface};--surface-2:${o.surface2};--line:${o.line};`;
+  return `:root{${v(p.dark)}}@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){${v(p.light)}}}:root[data-theme="light"]{${v(p.light)}}`;
+}
+const palette = () => PALETTES.find(p => p.id === ((ui.wiz ? ui.wiz.d.palette : S?.settings?.palette) || 'gold')) || PALETTES[0];
+function applyPalette() {
+  let el = document.getElementById('palette-css');
+  if (!el) { el = document.createElement('style'); el.id = 'palette-css'; document.head.appendChild(el); }
+  const css = paletteCss(palette()); if (el.textContent !== css) el.textContent = css;
+  const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = palette().dark.bg;
+}
+const levelNow = () => S ? levelOf(xpAll().total).L : 1;
+const perkOn = id => { const p = PERKS.find(x => x.id === id); return !!S && levelNow() >= p.level && !!S.settings.perks?.[id]; };
+function confetti() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const c = document.createElement('canvas'); c.className = 'confetti'; c.width = innerWidth * 2; c.height = innerHeight * 2; document.body.appendChild(c);
+  const x = c.getContext('2d'), cs = getComputedStyle(document.documentElement);
+  const cols = ['--accent', '--sleep', '--body', '--money', '--people', '--mind'].map(k => cs.getPropertyValue(k).trim());
+  const parts = Array.from({ length: 140 }, () => ({ x: c.width / 2, y: c.height * .35, vx: (Math.random() - .5) * 26, vy: -Math.random() * 26 - 8, r: Math.random() * 6 + 4, c: rnd(cols), a: Math.random() * 6 }));
+  let f = 0;
+  (function step() {
+    x.clearRect(0, 0, c.width, c.height);
+    for (const p of parts) { p.vy += .7; p.x += p.vx; p.y += p.vy; p.a += .2; x.fillStyle = p.c; x.save(); x.translate(p.x, p.y); x.rotate(p.a); x.fillRect(-p.r, -p.r / 2, p.r * 2, p.r); x.restore(); }
+    if (++f < 110) requestAnimationFrame(step); else c.remove();
+  })();
+}
+
 function applyTheme() {
+  applyPalette();
   const th = ui.wiz ? ui.wiz.d.theme : S?.settings?.theme;
   if (th === 'dark' || th === 'light') document.documentElement.setAttribute('data-theme', th);
   else document.documentElement.removeAttribute('data-theme');
@@ -1389,10 +1446,10 @@ async function drawShare(w) {
   try { await Promise.all(['800 120px Unbounded', '700 40px Unbounded', '500 36px "Golos Text"', '600 36px "Golos Text"'].map(f => document.fonts.load(f))); } catch (e) { /* фолбэк */ }
   const W = 1080, H = 1350, c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
-  const gold = '#f2b544', ink = '#11131a', fg = '#eceae3', mut = '#9097a9', line = '#2d3245', red = '#ff6f6f', green = '#5dd3a2';
+  const P = palette().dark, gold = P.accent, ink = P.bg, fg = '#eceae3', mut = '#9097a9', line = P.line, red = '#ff6f6f', green = '#5dd3a2';
   x.fillStyle = ink; x.fillRect(0, 0, W, H);
   const D = '"Unbounded", "Golos Text", system-ui, sans-serif', B = '"Golos Text", system-ui, sans-serif';
-  x.fillStyle = mut; x.font = `600 34px ${B}`; x.fillText(`${S.profile.name ? S.profile.name.toUpperCase() + ' · ' : ''}НЕДЕЛЯ ${isoWeekNo(w)} · ${fmtWeek(w).toUpperCase()}`, 90, 150);
+  x.fillStyle = mut; x.font = `600 34px ${B}`; x.fillText(`${S.profile.name ? S.profile.name.toUpperCase() + (titleName() ? ' · ' + titleName().toUpperCase() : '') + ' · ' : ''}НЕДЕЛЯ ${isoWeekNo(w)} · ${fmtWeek(w).toUpperCase()}`, 90, 150);
   const cx = 300, cy = 470, r = 190;
   x.lineCap = 'round'; x.lineWidth = 34;
   x.strokeStyle = line; x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.stroke();
@@ -1407,7 +1464,7 @@ async function drawShare(w) {
   const tiles = [[`${si.streak}`, plural(si.streak, 'день подряд', 'дня подряд', 'дней подряд')], [`${lv}`, 'уровень'], [`${sc.cards}`, plural(sc.cards, 'карта дня', 'карты дня', 'карт дня')]];
   tiles.forEach(([v, l], i) => {
     const tx = 90 + i * 310, ty = 790;
-    x.fillStyle = '#1a1d27'; roundRect(x, tx, ty, 280, 220, 36); x.fill();
+    x.fillStyle = P.surface; roundRect(x, tx, ty, 280, 220, 36); x.fill();
     x.fillStyle = fg; x.font = `800 76px ${D}`; x.fillText(v, tx + 34, ty + 120);
     x.fillStyle = mut; x.font = `500 32px ${B}`; x.fillText(l, tx + 34, ty + 175);
   });
@@ -1762,6 +1819,9 @@ document.addEventListener('click', async e => {
     }
     case 'tone': S.settings.tone = el.dataset.v; save(); render(); return;
     case 'theme': S.settings.theme = el.dataset.v; save(); render(); return;
+    case 'palette': S.settings.palette = el.dataset.v; save(); render(); return;
+    case 'perk': S.settings.perks[el.dataset.v] = !S.settings.perks[el.dataset.v]; if (el.dataset.v === 'title' && !S.settings.title) S.settings.title = TITLES[0].id; save(); render(); return;
+    case 'title': S.settings.title = el.dataset.v; save(); render(); return;
     case 'save-settings': {
       const wv = val('s-wake'), bv = val('s-bed'); if (wv) S.settings.wake = wv; if (bv) S.settings.bed = bv;
       save(); render(); toast('Настройки сохранены'); return;
@@ -1808,6 +1868,7 @@ function wizAction(a, el) {
     case 'wz-radd': { const title = val('wz-rtitle').trim(), price = Math.max(10, Math.round(num(val('wz-rprice')) || 200)); if (!title) { toast('Напиши, что за награда'); return; } d.rewards.push({ id: 'r' + Date.now(), title, price, on: true }); return re(); }
     case 'wz-tone': d.tone = el.dataset.v; return re();
     case 'wz-sleep': d.sleep = el.dataset.v === '1'; return re();
+    case 'wz-pal': d.palette = el.dataset.v; applyPalette(); return re();
     case 'wz-theme': d.theme = el.dataset.v; document.documentElement.toggleAttribute('data-theme', d.theme !== 'auto'); if (d.theme !== 'auto') document.documentElement.setAttribute('data-theme', d.theme); return re();
   }
 }

@@ -349,3 +349,42 @@ const CHANGELOG = [
       'Контент не заезжает под часы и батарейку при прокрутке',
     ] },
 ];
+
+/* Темы оформления. Каждая задаёт цвета для тёмной и светлой версии.
+   level — с какого уровня открывается. */
+const PALETTES = [
+  { id: 'gold', name: 'Золото', level: 1,
+    dark: { accent: '#f2b544', accentText: '#f2b544', onAccent: '#1d1503', bg: '#11131a', surface: '#1a1d27', surface2: '#232736', line: '#2d3245' },
+    light: { accent: '#f0ac30', accentText: '#925f00', onAccent: '#1d1503', bg: '#eef0f5', surface: '#ffffff', surface2: '#e4e7ef', line: '#d4d8e3' } },
+  { id: 'ocean', name: 'Океан', level: 1,
+    dark: { accent: '#4fb3ff', accentText: '#6cc0ff', onAccent: '#04192b', bg: '#0e141d', surface: '#162030', surface2: '#1e2a3d', line: '#2a3850' },
+    light: { accent: '#3a9be6', accentText: '#155f9c', onAccent: '#ffffff', bg: '#ecf2f8', surface: '#ffffff', surface2: '#dfe8f2', line: '#cbd8e6' } },
+  { id: 'forest', name: 'Лес', level: 3,
+    dark: { accent: '#6fd08c', accentText: '#7fd99a', onAccent: '#06200f', bg: '#0f1612', surface: '#17211b', surface2: '#1f2c24', line: '#2b3b31' },
+    light: { accent: '#45b06a', accentText: '#1e6e3b', onAccent: '#ffffff', bg: '#edf3ee', surface: '#ffffff', surface2: '#e0eae2', line: '#cddbd0' } },
+  { id: 'sunset', name: 'Закат', level: 5,
+    dark: { accent: '#ff8a65', accentText: '#ff9a7a', onAccent: '#2a0d03', bg: '#17110f', surface: '#221916', surface2: '#2c221e', line: '#3b2d27' },
+    light: { accent: '#f2794f', accentText: '#a8441f', onAccent: '#ffffff', bg: '#f7f0ec', surface: '#ffffff', surface2: '#efe3dc', line: '#e2d2c9' } },
+  { id: 'sakura', name: 'Сакура', level: 8,
+    dark: { accent: '#ff8fbf', accentText: '#ff9fc9', onAccent: '#2b0517', bg: '#181016', surface: '#231820', surface2: '#2e202a', line: '#3d2b38' },
+    light: { accent: '#e8679f', accentText: '#a62a62', onAccent: '#ffffff', bg: '#f8eff4', surface: '#ffffff', surface2: '#f0e1ea', line: '#e3cfdb' } },
+  { id: 'neon', name: 'Неон', level: 12,
+    dark: { accent: '#b48cff', accentText: '#c2a1ff', onAccent: '#170838', bg: '#100e1b', surface: '#191628', surface2: '#221e36', line: '#302a49' },
+    light: { accent: '#8b5cf6', accentText: '#5b2fc9', onAccent: '#ffffff', bg: '#f1eefa', surface: '#ffffff', surface2: '#e6e0f6', line: '#d6cdee' } },
+  { id: 'mono', name: 'Графит', level: 15,
+    dark: { accent: '#e6e6e6', accentText: '#e6e6e6', onAccent: '#111111', bg: '#0e0e0f', surface: '#181819', surface2: '#222224', line: '#2f2f32' },
+    light: { accent: '#222222', accentText: '#222222', onAccent: '#ffffff', bg: '#f2f2f2', surface: '#ffffff', surface2: '#e6e6e6', line: '#d4d4d4' } },
+];
+
+/* Фишки, которые открываются с уровнем */
+const PERKS = [
+  { id: 'confetti', name: 'Салют', desc: 'Конфетти, когда закрыты все квесты дня', level: 4 },
+  { id: 'title', name: 'Титул', desc: 'Подпись рядом с именем и на карточке недели', level: 7 },
+];
+const TITLES = [
+  { id: 't7', name: 'Упорный', level: 7 },
+  { id: 't9', name: 'Мастер режима', level: 9 },
+  { id: 't12', name: 'Машина', level: 12 },
+  { id: 't15', name: 'Легенда', level: 15 },
+  { id: 't20', name: 'Неостановимый', level: 20 },
+];
