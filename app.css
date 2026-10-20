@@ -549,3 +549,8 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .sw-l { position: absolute; top: 8px; right: 8px; font-size: .64rem; font-weight: 700; color: var(--muted); }
 .title-tag { display: inline-block; margin-top: 4px; font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
 .confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
+
+/* ================= фраза и события ================= */
+.quote { border: 0; background: none; padding: 0; text-align: left; color: var(--muted); font-size: .9rem; line-height: 1.4; font-style: italic; }
+.card.event { border: 1px dashed var(--accent); }
+.card.event .rar { background: var(--accent); color: var(--on-accent); }

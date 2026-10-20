@@ -229,6 +229,15 @@ function drawCard(exclude = []) {
   S.recentCards = [c.id, ...(S.recentCards || [])].slice(0, 25);
   return c.id;
 }
+function ensureEvent(t) {
+  const d = day(t);
+  if (d.ev !== undefined) return d.ev;
+  if (t === S.created || Math.random() > EVENT_CHANCE) { d.ev = null; save(); return null; }
+  let r = Math.random() * EVENTS.reduce((a, e) => a + e.weight, 0), ev = EVENTS[0];
+  for (const e of EVENTS) { if ((r -= e.weight) <= 0) { ev = e; break; } }
+  d.ev = { id: ev.id, coins: ev.id === 'chest' ? 20 + Math.floor(Math.random() * 5) * 10 : 0, claimed: false, used: false };
+  save(); return d.ev;
+}
 function ensureCard(t) {
   const d = day(t);
   if (!d.card) { d.card = { id: drawCard(), rerolled: false }; save(); }
@@ -259,6 +268,7 @@ function coins() {
     const d = S.days[k];
     for (const id in d.q) earned += recCoins(d.q[id]);
     if (d.card?.done) earned += d.card.done.c || 0;
+    if (d.ev?.id === 'chest' && d.ev.claimed) earned += d.ev.coins;
   }
   for (const s of allSide()) earned += (S.side[s.id] || []).length * Math.round(s.xp / 5);
   for (const w in S.weeks) { const r = challengeResult(w); if (r?.done) earned += 100 + r.wk.stake * 2; }
@@ -274,7 +284,7 @@ function xpAll() {
   const st = Object.fromEntries(Object.keys(STATS).map(k => [k, 0]));
   for (const k in S.days) {
     const d = S.days[k];
-    for (const id in d.q) { const q = Q[id]; if (q) st[q.stat] += Math.round(20 * d.q[id].v); }
+    for (const id in d.q) { const q = Q[id]; if (q) st[q.stat] += Math.round(20 * d.q[id].v * (d.q[id].mult || 1)); }
     if (d.card?.done) { const c = CARD[d.card.id]; if (c) st[c.stat] += Math.round(RARITY[c.rarity].xp * d.card.done.v); }
   }
   for (const s of allSide()) for (const _ of (S.side[s.id] || [])) st[s.stat] += s.xp;
@@ -477,11 +487,15 @@ function checkBossKill(b, t) {
 /* ================= отметки ================= */
 function mark(id, t, rec) {
   rec.ts = rec.ts || Date.now();
+  const ev = peekDay(t).ev;
+  if (ev?.id === 'double' && !ev.used && !rec.fix) { rec.mult = 2; ev.used = true; }
   day(t).q[id] = rec;
   logMark({ ts: rec.ts, kind: 'q', id, day: t });
 }
 function markCard(t, rec) {
-  const d = day(t); rec.ts = Date.now(); d.card.done = rec;
+  const d = day(t); rec.ts = Date.now();
+  if (d.ev?.id === 'lucky' && rec.c) rec.c *= 2;
+  d.card.done = rec;
   logMark({ ts: rec.ts, kind: 'card', id: d.card.id, day: t });
 }
 function markChallenge(t, proof) {
@@ -512,7 +526,7 @@ function afterChange(prevXp, prevCoins) {
   const bits = [];
   if (prevXp !== undefined && now.total > prevXp) bits.push(`+${now.total - prevXp} опыта`);
   if (prevCoins !== undefined && c > prevCoins) bits.push(`+${c - prevCoins} монет`);
-  if (bits.length) toast(bits.join(' · '));
+  if (bits.length) toast((Math.random() < .35 ? rnd(PRAISE) + '! ' : '') + bits.join(' · '));
   let delay = 500;
   if (L > (S.lastLevel || 1)) {
     const slotsUp = slotsFor(L) > slotsFor(S.lastLevel || 1);
@@ -857,6 +871,14 @@ function viewToday() {
   const t = todayKey(), y = addDays(t, -1);
   const active = activeQuests();
   let html = viewHeader();
+  const qi = ((daysBetween('2026-01-01', t) + (ui.quoteShift || 0)) % QUOTES.length + QUOTES.length) % QUOTES.length;
+  html += `<button class="quote" data-a="quote-next" aria-label="Другая фраза">${esc(QUOTES[qi])}</button>`;
+  const ev = ensureEvent(t), E = ev && EVENTS.find(x => x.id === ev.id);
+  if (E && !(ev.id === 'chest' && ev.claimed) && !(ev.id === 'double' && ev.used) && !(ev.id === 'lucky' && peekDay(t).card?.done)) {
+    html += `<section class="card event"><div class="section-head"><span class="label">Случайное событие</span><span class="rar">${esc(E.title)}</span></div>
+      <p>${esc(E.text)}${ev.id === 'chest' ? ` Внутри <b class="mono">${ev.coins}</b> монет.` : ''}</p>
+      ${ev.id === 'chest' ? '<button class="btn sm" data-a="chest" style="align-self:flex-start">Открыть сундук</button>' : ''}</section>`;
+  }
 
   const prevW = addDays(weekOf(t), -7);
   if (S.seenWeek !== prevW && addDays(prevW, 6) >= S.created) {
@@ -1611,6 +1633,8 @@ document.addEventListener('click', async e => {
   const t = todayKey(), px = xpAll().total, pc = coins();
 
   switch (a) {
+    case 'quote-next': ui.quoteShift = (ui.quoteShift || 0) + 1; render(); return;
+    case 'chest': { const e = day(t).ev; if (!e || e.claimed) return; e.claimed = true; afterChange(px, pc); return; }
     case 'tab': ui.tab = el.dataset.t; ui.week = null; window.scrollTo(0, 0); render(); return;
     case 'go-shop': ui.tab = 'me'; render(); document.getElementById('shop')?.scrollIntoView({ block: 'start' }); return;
     case 'guide-open': ui.guide = 0; window.scrollTo(0, 0); render(); return;
