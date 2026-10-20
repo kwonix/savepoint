@@ -1,7 +1,7 @@
 /* Офлайн: свои файлы кладём в кэш при установке, шрифты Google — при первом открытии. */
-const VERSION = 'savepoint-v2';
+const VERSION = 'savepoint-v2.0.0';
 const FONT_CACHE = 'savepoint-fonts';
-const ASSETS = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest',
+const ASSETS = ['./', './index.html', './app.css', './data.js', './app.js', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
