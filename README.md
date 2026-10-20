@@ -6,7 +6,7 @@
 
 **Трекер привычек в виде игры.** Ежедневные квесты, случайная карта дня, вызов недели, боссы с полоской здоровья, режим сна и оценка недели из 100. Привычки, которые закрепились, уходят на автопилот.
 
-![Версия](https://img.shields.io/badge/версия-2.3.0-f2b544?style=flat-square)
+![Версия](https://img.shields.io/badge/версия-2.3.1-f2b544?style=flat-square)
 ![Офлайн](https://img.shields.io/badge/работает-офлайн-5dd3a2?style=flat-square)
 ![Данные](https://img.shields.io/badge/данные-только_на_устройстве-8f9cff?style=flat-square)
 ![Без регистрации](https://img.shields.io/badge/без-регистрации-f294cf?style=flat-square)
