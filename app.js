@@ -164,8 +164,16 @@ function deactivate(id, k) {
   if (last && !last.to) { if (last.from >= k) r.periods.pop(); else last.to = addDays(k, -1); }
   r.auto = null;
 }
-const slotsFor = L => L >= 12 ? 6 : L >= 8 ? 5 : L >= 5 ? 4 : L >= 3 ? 3 : 2;
-const slotLevel = n => ({ 3: 3, 4: 5, 5: 8, 6: 12 }[n]);
+/* Нагрузка вместо жёсткого лимита: рекомендация растёт с уровнем,
+   связанные квесты (например, подъём и отбой) считаются за один */
+const recFor = L => L >= 12 ? 7 : L >= 8 ? 6 : L >= 5 ? 5 : L >= 3 ? 4 : 3;
+const recLevel = n => ({ 4: 3, 5: 5, 6: 8, 7: 12 }[n]);
+function loadOf(ids) {
+  let n = ids.length;
+  for (const grp of QUEST_LINKS) { const k = grp.filter(id => ids.includes(id)).length; if (k > 1) n -= k - 1; }
+  return n;
+}
+const linkedNote = ids => QUEST_LINKS.filter(g => g.every(id => ids.includes(id))).map(g => g.map(id => Q[id].title.toLowerCase()).join(' + '));
 
 /* Окно отметки: можно ли отметить квест прямо сейчас */
 function windowFor(q, t, now = new Date()) {
@@ -194,7 +202,7 @@ function evolve() {
       r.periods[r.periods.length - 1].to = addDays(t, -1);
       r.auto = t; r.check = weekOf(t);
       S.events.push({ day: t, type: 'auto', id: q.id });
-      notes.push(`«${q.title}» ушёл на автопилот. +300 опыта, слот свободен`);
+      notes.push(`«${q.title}» ушёл на автопилот. +300 опыта`);
     }
   }
   ensureWeek(weekOf(t));
@@ -529,12 +537,12 @@ function afterChange(prevXp, prevCoins) {
   if (bits.length) toast((Math.random() < .35 ? rnd(PRAISE) + '! ' : '') + bits.join(' · '));
   let delay = 500;
   if (L > (S.lastLevel || 1)) {
-    const slotsUp = slotsFor(L) > slotsFor(S.lastLevel || 1);
+    const slotsUp = recFor(L) > recFor(S.lastLevel || 1);
     const newPal = PALETTES.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
     const newPerk = PERKS.filter(p => p.level > (S.lastLevel || 1) && p.level <= L).map(p => p.name);
     S.lastLevel = L; save();
     if (newPal.length || newPerk.length) setTimeout(() => toast(`Открыто: ${[...newPal.map(n => 'тема «' + n + '»'), ...newPerk.map(n => 'фишка «' + n + '»')].join(', ')}. Включи в настройках`, true), delay + 800);
-    setTimeout(() => toast(`Новый уровень: ${L}${slotsUp ? '. Открыт новый слот для квеста' : ''}`, true), delay); delay += 800;
+    setTimeout(() => toast(`Новый уровень: ${L}${slotsUp ? `. Рекомендация: до ${recFor(L)} квестов` : ''}`, true), delay); delay += 800;
   }
   if (got.length) { setTimeout(() => toast(got.length === 1 ? `Ачивка: ${got[0].title}` : `Новые ачивки: ${got.map(a => a.title).join(', ')}`, true), delay); delay += 800; }
   notes.forEach(n => { setTimeout(() => toast(n, true), delay); delay += 800; });
@@ -561,7 +569,7 @@ const ICON = {
 const GUIDE = [
   { eyebrow: 'Шаг 1 из 4 · Как это работает', title: 'Игра, где прокачиваешься ты',
     body: `<ul class="glist">
-      <li><b>Квесты дня.</b> Привычки, которые ты сам выбираешь из каталога. Слотов сначала два, новые открываются с уровнем. Взять всё сразу нельзя специально.</li>
+      <li><b>Квесты дня.</b> Привычки, которые ты сам выбираешь из каталога. Сначала советуем до трёх, с уровнем можно больше. Связанные квесты, например подъём и отбой, считаются за один.</li>
       <li><b>Карта дня.</b> Каждый день случайное задание из колоды. Ты не знаешь, что выпадет. Не нравится — можно перетянуть один раз.</li>
       <li><b>Вызов недели.</b> Одно задание посложнее на всю неделю. На него можно поставить монеты.</li>
       <li><b>Оценка недели из 100</b> и карточка, которую можно отправить друзьям.</li>
@@ -586,7 +594,7 @@ const GUIDE = [
       <li><b>Два щита в неделю.</b> Пропущенный день закрывается щитом без штрафа.</li>
       <li><b>Серия не обнуляется.</b> Если щиты кончились, она падает наполовину.</li>
       <li><b>Не ложился спать?</b> Есть кнопка, чтобы записать это и причину. Без наказания — чтобы потом увидеть в отчёте, откуда растут ноги.</li>
-      <li><b>Автопилот.</b> Привычка, которая держится 21 день из 28, уходит из списка и освобождает слот. Приложение со временем становится нужно меньше — так и задумано.</li></ul>` },
+      <li><b>Автопилот.</b> Привычка, которая держится 21 день из 28, уходит из ежедневного списка. Приложение со временем становится нужно меньше — так и задумано.</li></ul>` },
 ];
 function viewGuide(step, final) {
   const g = GUIDE[step];
@@ -638,7 +646,7 @@ function wizSet(path, v) {
   const d = ui.wiz?.d; if (!d) return;
   d[path] = v;
 }
-const wizQuestLimit = () => ui.wiz.mode === 'new' ? 2 : slotsFor(levelOf(xpAll().total).L);
+const wizRec = () => ui.wiz.mode === 'new' ? recFor(1) : recFor(levelOf(xpAll().total).L);
 function wizProblem() {
   const d = ui.wiz.d, step = WIZ[ui.wiz.step];
   if (step === 'name' && !d.name.trim()) return 'Напиши, как к тебе обращаться';
@@ -662,11 +670,11 @@ function viewWizard() {
        <div class="field"><span>Включить режим сна?</span><div class="seg"><button class="${d.sleep === true ? 'on' : ''}" data-a="wz-sleep" data-v="1">Да</button><button class="${d.sleep === false ? 'on' : ''}" data-a="wz-sleep" data-v="0">Нет</button></div></div>
        <p class="muted small">Режим сна — это карточка на главном экране, утренний чек-ин «как спалось», плавный переход на новое время и будильники в Календарь. Если не нужно, ничего про сон показываться не будет. Включить можно позже в настройках.</p>`;
   else if (step === 'quests') {
-    const lim = wizQuestLimit();
-    body = head('С чего начнём', `Выбери сам до ${lim} ${plural(lim, 'квеста', 'квестов', 'квестов')} на каждый день. Остальные возьмёшь позже, когда откроются слоты. Мало — это специально.`)
+    const lim = wizRec(), load = loadOf(d.quests), links = linkedNote(d.quests);
+    body = head('С чего начнём', `Выбери сам квесты на каждый день. Советуем начать с ${lim}: когда берёшь всё сразу, обычно всё сразу и бросаешь. Подъём и отбой считаются за один.`)
       + Object.entries(STATS).map(([sk, sv]) => `<div class="cat-head" data-stat="${sk}"><span class="chip">${sv.name}</span></div><div class="chips">${CATALOG.filter(q => q.stat === sk && qStatusSafe(q.id) !== 'auto').map(q =>
         `<button class="pill${d.quests.includes(q.id) ? ' on' : ''}" data-a="wz-q" data-id="${q.id}">${esc(q.title)}</button>`).join('')}</div>`).join('')
-      + `<p class="muted small">Выбрано: <b class="mono">${d.quests.length}/${lim}</b></p>`;
+      + `<p class="small ${load > lim ? 'warn-t' : 'muted'}">Нагрузка: <b class="mono">${load} из ${lim}</b> рекомендуемых${links.length ? ` · ${links.join(', ')} — за один` : ''}${load > lim ? '. Больше рекомендации — можно, но решай сам' : ''}</p>`;
   } else if (step === 'bosses') {
     const kept = w.mode === 'edit' ? activeBosses() : [];
     const total = d.keep.length + d.bosses.length;
@@ -989,10 +997,10 @@ function viewBosses() {
 }
 
 function viewQuests() {
-  const t = todayKey(), L = levelOf(xpAll().total).L, slots = slotsFor(L);
-  const active = activeQuests(), free = slots - active.length;
+  const t = todayKey(), L = levelOf(xpAll().total).L, rec = recFor(L);
+  const active = activeQuests(), free = rec - loadOf(active.map(q => q.id));
   let html = `<header class="top"><span class="label">Квесты</span><h1>Твой набор привычек</h1>
-    <p class="muted">Слоты: <b class="mono">${active.length}/${slots}</b>. ${slots < 6 ? `Следующий слот на уровне ${slotLevel(slots + 1)}.` : 'Все слоты открыты.'} Привычка, которая держится ${AUTO_NEED} дней из ${AUTO_WINDOW}, уходит на автопилот и освобождает слот.</p></header>`;
+    <p class="muted">Нагрузка: <b class="mono ${loadOf(active.map(q => q.id)) > rec ? 'warn-t' : ''}">${loadOf(active.map(q => q.id))} из ${rec}</b> рекомендуемых. ${rec < 7 ? `С уровня ${recLevel(rec + 1)} — до ${rec + 1}.` : ''} Связанные квесты считаются за один. Привычка, которая держится ${AUTO_NEED} дней из ${AUTO_WINDOW}, уходит на автопилот и перестаёт считаться.</p></header>`;
 
   html += `<section class="card"><h2>Активные</h2>${active.length ? active.map(q => {
     const r = S.quests[q.id], since = r.periods[r.periods.length - 1].from, have = countDone(q.id, t, AUTO_WINDOW);
@@ -1011,7 +1019,7 @@ function viewQuests() {
   const auto = CATALOG.filter(q => qStatus(q.id) === 'auto');
   if (auto.length) html += `<section class="card"><h2>На автопилоте</h2>${auto.map(q => `<div class="side"><div class="side-title">${esc(q.title)}</div><span class="badge gold">★</span></div>`).join('')}</section>`;
 
-  html += `<section class="card"><div class="section-head"><h2>Каталог</h2><span class="label">${free > 0 ? `свободно слотов: ${free}` : 'слоты заняты'}</span></div>`;
+  html += `<section class="card"><div class="section-head"><h2>Каталог</h2><span class="label">${free > 0 ? `в рекомендации ещё ${free}` : 'рекомендация набрана'}</span></div>`;
   for (const [sk, sv] of Object.entries(STATS)) {
     const list = CATALOG.filter(q => q.stat === sk && qStatus(q.id) === 'off');
     if (!list.length) continue;
@@ -1019,7 +1027,7 @@ function viewQuests() {
     html += list.map(q => {
       const tag = q.kind === 'timer' ? `таймер ${q.mins} мин` : q.proof === 'photo' ? 'с фото' : q.kind === 'text' ? 'текст' : q.from && q.from !== '04:00' && q.from !== '06:00' ? `с ${q.from}` : '';
       return `<div class="side"><div style="min-width:0"><div class="side-title">${esc(q.title)}</div><span class="muted small">${esc(q.hint)}${tag ? ` · ${tag}` : ''}</span></div>
-        ${free > 0 ? `<button class="btn sm" data-a="q-take" data-id="${q.id}">Взять</button>` : `<span class="badge">${ICON.lock}</span>`}</div>`;
+        <button class="btn sm${free > 0 || QUEST_LINKS.some(g => g.includes(q.id) && g.some(x => x !== q.id && qStatus(x) === 'active')) ? '' : ' ghost'}" data-a="q-take" data-id="${q.id}">Взять</button></div>`;
     }).join('');
   }
   html += `</section>`;
@@ -1797,17 +1805,18 @@ document.addEventListener('click', async e => {
     }
     case 'auto-yes': S.quests[el.dataset.id].check = weekOf(t); save(); render(); toast('Держится. Красава', true); return;
     case 'auto-no': {
-      if (activeQuests().length >= slotsFor(levelOf(xpAll().total).L)) { toast('Слоты заняты. Освободи один на вкладке «Квесты»'); return; }
       activate(el.dataset.id, t); save(); render(); toast('Вернул в список дня. Это нормально'); return;
     }
     case 'q-take': {
-      if (activeQuests().length >= slotsFor(levelOf(xpAll().total).L)) { toast('Свободных слотов нет'); return; }
-      activate(el.dataset.id, t); save(); render(); toast(`Взят квест: ${Q[el.dataset.id].title}`, true); return;
+      const id = el.dataset.id, next = loadOf(activeQuests().map(q => q.id).concat(id)), rec = recFor(levelOf(xpAll().total).L);
+      if (next > rec) { confirmAsk(`Взять «${Q[id].title}»?`, `Нагрузка станет ${next} при рекомендации ${rec}. Когда квестов слишком много, их обычно бросают все разом. Можно, но лучше закрепить текущие.`, 'Всё равно взять', 'q-take', id); return; }
+      activate(id, t); save(); render(); toast(`Взят квест: ${Q[id].title}`, true); return;
     }
-    case 'q-drop': confirmAsk(`Убрать «${Q[el.dataset.id].title}»?`, 'Слот освободится. Если вернёшь квест, прогресс до автопилота начнётся заново.', 'Убрать квест', 'q-drop', el.dataset.id); return;
+    case 'q-drop': confirmAsk(`Убрать «${Q[el.dataset.id].title}»?`, 'Если вернёшь квест, прогресс до автопилота начнётся заново.', 'Убрать квест', 'q-drop', el.dataset.id); return;
     case 'confirm-yes': {
       const { act, id } = ui.sheet; ui.sheet = null;
-      if (act === 'q-drop') { deactivate(id, t); toast('Квест убран, слот свободен'); }
+      if (act === 'q-drop') { deactivate(id, t); toast('Квест убран'); }
+      if (act === 'q-take') { activate(id, t); toast(`Взят квест: ${Q[id].title}`, true); }
       if (act === 'boss-del') { S.bosses = S.bosses.filter(b => b.id !== id); S.events = S.events.filter(e => e.id !== id); toast('Босс удалён'); }
       if (act === 'reward-del') { S.shop.rewards = S.shop.rewards.filter(r => r.id !== id); toast('Награда удалена'); }
       if (act === 'side-del') { S.sideList = S.sideList.filter(x => x !== id); S.custom = S.custom.filter(c => c.id !== id); toast('Сайд-квест удалён'); }
@@ -1924,7 +1933,7 @@ function wizAction(a, el) {
     case 'wz-next': { const err = wizProblem(); if (err) { toast(err); return; } if (w.step === WIZ.length - 1) { wizApply(); return; } w.step++; ui.slide = 'next'; window.scrollTo(0, 0); return re(); }
     case 'wz-back': ui.slide = 'back'; w.step = Math.max(0, w.step - 1); window.scrollTo(0, 0); return re();
     case 'wz-cancel': ui.wiz = null; if (S && !S.profileDone) { S.profileDone = true; save(); } return re();
-    case 'wz-q': { const id = el.dataset.id; if (d.quests.includes(id)) d.quests = d.quests.filter(x => x !== id); else { if (d.quests.length >= wizQuestLimit()) { toast(`Максимум ${wizQuestLimit()}. Сними другой квест`); return; } d.quests.push(id); } return re(); }
+    case 'wz-q': { const id = el.dataset.id; d.quests = d.quests.includes(id) ? d.quests.filter(x => x !== id) : d.quests.concat(id); return re(); }
     case 'wz-keep': { const id = el.dataset.id; d.keep = d.keep.includes(id) ? d.keep.filter(x => x !== id) : d.keep.concat(id); return re(); }
     case 'wz-badd': if (d.keep.length + d.bosses.length >= BOSS_LIMIT) { toast(`Максимум ${BOSS_LIMIT} босса`); return; } d.bosses.push({ type: el.dataset.t }); return re();
     case 'wz-bdel': d.bosses.splice(Number(el.dataset.i), 1); return re();
