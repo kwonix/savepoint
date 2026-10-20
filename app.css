@@ -577,3 +577,6 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .alarm { display: flex; align-items: center; gap: 10px; font-size: .9rem; }
 .alarm svg { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--sleep); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .plan .kv.now { color: var(--accent-text); font-weight: 600; }
+
+.check-row { display: flex; gap: 10px; align-items: flex-start; font-size: .86rem; line-height: 1.35; }
+.check-row input { width: 22px; height: 22px; min-height: 0; flex: none; margin: 0; accent-color: var(--accent); -webkit-appearance: auto; appearance: auto; }

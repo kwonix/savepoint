@@ -472,7 +472,7 @@ function makeBoss(d, t) {
     name: (d.name || '').trim() || T.name, stat: T.pickStat ? (d.stat || 'mind') : T.stat,
     unit: T.id === 'custom' ? ((d.unit || '').trim() || 'раз') : T.unit,
     total: num(d.total), weekly: num(d.weekly), start: num(d.start), target: num(d.target), heal: num(d.heal) || 3,
-    hits: [], created: t, defeated: null };
+    link: T.id === 'habit' && (d.link === true || d.link === 'true'), hits: [], created: t, defeated: null };
 }
 function bossProblem(d) {
   const T = BT[d.type];
@@ -526,6 +526,16 @@ function bossHit(b, amount, t) {
   const won = checkBossKill(b, t);
   if (won) setTimeout(() => toast(`Босс «${b.name}» побеждён! +500 опыта`, true), 1400);
   return won;
+}
+/* Босс-привычка, связанный со счётчиком: закрытый день квеста = удар по боссу */
+function syncSmoke(k) {
+  const d = peekDay(k);
+  for (const b of S.bosses.filter(b => b.link && !b.defeated && BT[b.type].mode === 'streak')) {
+    b.hits = b.hits.filter(h => !(h.day === k && h.auto));
+    if (b.hits.some(h => h.day === k)) continue;            // ручная отметка за этот день важнее
+    if (d.q.smoke) b.hits.push({ day: k, clean: (d.cigs || 0) === 0, ts: Date.now(), auto: true });
+    checkBossKill(b, k);
+  }
 }
 const linkedBoss = qid => { const L = QUEST_BOSS[qid]; return L ? activeBosses().find(b => b.type === L.type) : null; };
 function checkBossKill(b, t) {
@@ -1013,20 +1023,25 @@ function bossCard(b, full) {
   } else {
     info = `Чистых дней: ${st.streak} из ${b.total}`;
     week = `На этой неделе: ${wk} из ${b.weekly || 7}`;
-    controls = todayHit
+    if (b.link) {
+      const cg = peekDay(t).cigs || 0;
+      controls = todayHit ? `<span class="badge ${todayHit.clean ? 'gold' : ''}">${todayHit.clean ? 'Сегодня чистый день' : `Срыв: ${cg} шт. Босс вылечился на ${b.heal} дн.`}</span>`
+        : `<span class="muted small">Считается по счётчику квеста «${esc(Q.smoke.title)}»: закроешь день на нуле — чистый день, больше нуля — срыв.${qStatus('smoke') !== 'active' ? ' Квест сейчас не взят.' : ''}</span>`;
+    } else controls = todayHit
       ? `<div class="row"><span class="badge ${todayHit.clean ? 'gold' : ''}">${todayHit.clean ? 'Сегодня чистый день' : `Срыв: босс вылечился на ${b.heal} дн.`}</span><button class="linkbtn" data-a="boss-undo" data-id="${b.id}">отменить</button></div>`
       : `<div class="row"><button class="btn sm" data-a="boss-clean" data-id="${b.id}" data-v="1">Чистый день</button><button class="btn sm ghost" data-a="boss-clean" data-id="${b.id}" data-v="0">Сорвался</button></div>
          <span class="muted small">Отмечай вечером. Срыв без штрафа к опыту, но босс лечится.</span>`;
   }
   const hist = full && b.hits.length ? `<div class="muted small">Последние: ${b.hits.slice(-4).reverse().map(h => `${fmtDay(h.day)} — ${T.mode === 'sum' ? fmtN(h.amount, b.unit) : T.mode === 'measure' ? fmtN(h.value, b.unit) : h.clean ? 'чисто' : 'срыв'}`).join(' · ')}
     ${T.mode !== 'streak' ? `<button class="linkbtn" data-a="boss-undo" data-id="${b.id}">отменить последний</button>` : ''}</div>` : '';
+  const linkT = full && T.id === 'habit' && !b.defeated ? `<div class="kv"><span class="small">Считать по счётчику квеста «${esc(Q.smoke.title)}»</span><button class="toggle${b.link ? ' on' : ''}" data-a="boss-link" data-id="${b.id}" role="switch" aria-checked="${!!b.link}" aria-label="Связать со счётчиком"><i></i></button></div>` : '';
   const del = full ? `<button class="linkbtn" data-a="boss-del" data-id="${b.id}" style="align-self:flex-start">удалить босса</button>` : '';
   return `<section class="card boss" data-stat="${b.stat}">
     <div class="boss-top"><span class="boss-name">${esc(b.name)}</span><span class="chip">${esc(T.name)}</span></div>
     <div class="hp" role="img" aria-label="Здоровье босса ${Math.round(hpPct)}%"><i style="width:${hpPct.toFixed(1)}%"></i></div>
     <div class="hp-meta"><span>${info}</span><span class="mono">${Math.round(bossPct(b) * 100)}%</span></div>
     <span class="muted small">${week}</span>
-    ${controls}${hist}${del}
+    ${controls}${hist}${linkT}${del}
   </section>`;
 }
 
@@ -1036,6 +1051,7 @@ function bossForm(d, prefix, idx) {
   return `<div class="bform" data-stat="${T.stat}"${idx !== undefined ? ` data-bi="${idx}"` : ''}>
     <label class="field"><span>Название босса</span><input type="text" maxlength="40" data-${prefix}="name" value="${esc(d.name ?? '')}" placeholder="${esc(T.defName ? 'например: ' + T.defName : 'например: Курсовая')}"></label>
     ${T.pickStat ? `<label class="field"><span>Характеристика</span><select data-${prefix}="stat">${Object.entries(STATS).map(([k, v]) => `<option value="${k}" ${(d.stat || 'mind') === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>` : ''}
+    ${T.id === 'habit' ? `<label class="check-row"><input type="checkbox" data-${prefix}="link" ${d.link ? 'checked' : ''}><span>Считать по счётчику квеста «${esc(Q.smoke.title)}»: закрыл день на нуле — чистый, больше нуля — срыв</span></label>` : ''}
     <div class="grid2">${T.fields.map(f => `<label class="field"><span>${esc(f.label)}</span><input ${f.text ? 'type="text" maxlength="12"' : `type="number" inputmode="decimal" min="0" step="${f.step || 1}"`} data-${prefix}="${f.k}" value="${esc(d[f.k] ?? '')}" placeholder="${esc(f.ph)}"></label>`).join('')}</div>
   </div>`;
 }
@@ -1737,14 +1753,14 @@ document.addEventListener('click', async e => {
       const now = new Date();
       if (q.kind === 'wake') mark(id, t, { v: wakeQuality(now), time: hhmm(now) });
       else if (q.kind === 'bed') mark(id, t, { v: bedQuality(now), time: hhmm(now) });
-      else if (q.kind === 'smoke') mark(id, t, { v: smokeQuality(t, day(t).cigs || 0) });
+      else if (q.kind === 'smoke') { mark(id, t, { v: smokeQuality(t, day(t).cigs || 0) }); syncSmoke(t); }
       else mark(id, t, { v: 1 });
       afterChange(px, pc); return;
     }
     case 'unmark': {
       const id = el.dataset.id;
       if (ui.unmarkAsk !== id) { ui.unmarkAsk = id; toast('Нажми ещё раз, чтобы снять отметку'); setTimeout(() => { if (ui.unmarkAsk === id) ui.unmarkAsk = null; }, 3000); return; }
-      ui.unmarkAsk = null; delete day(t).q[id]; save(); render(); toast('Отметка снята'); return;
+      ui.unmarkAsk = null; delete day(t).q[id]; if (id === 'smoke') syncSmoke(t); save(); render(); toast('Отметка снята'); return;
     }
     case 'time-sheet': ui.sheet = { type: 'time', id: el.dataset.id }; render(); return;
     case 'time-save': {
@@ -1792,7 +1808,8 @@ document.addEventListener('click', async e => {
       if (v.length < q.minLen) { toast(`Ещё ${q.minLen - v.length} символов`); return; }
       ui.sheet = null; mark(q.id, t, { v: 1, proof: 'text', text: v, c: 10 }); afterChange(px, pc); return;
     }
-    case 'cig': { const d = day(t); d.cigs = Math.max(0, (d.cigs || 0) + Number(el.dataset.d)); if (d.q.smoke) d.q.smoke.v = smokeQuality(t, d.cigs); save(); render(); return; }
+    case 'cig': { const d = day(t); d.cigs = Math.max(0, (d.cigs || 0) + Number(el.dataset.d)); if (d.q.smoke) { d.q.smoke.v = smokeQuality(t, d.cigs); syncSmoke(t); } save(); render(); return; }
+    case 'boss-link': { const b = S.bosses.find(x => x.id === el.dataset.id); b.link = !b.link; if (b.link) syncSmoke(t); save(); render(); toast(b.link ? 'Босс считается по счётчику квеста' : 'Босс снова отмечается вручную'); return; }
     case 'card-done': { const c = CARD[peekDay(t).card.id], R = RARITY[c.rarity]; markCard(t, { v: 1, c: R.coins }); afterChange(px, pc); return; }
     case 'reroll': {
       const d = day(t); if (d.card.rerolled || d.card.done) return;
@@ -1972,10 +1989,11 @@ document.addEventListener('change', e => {
     if (e.target.value) S.settings.remind[rm] = e.target.value; else delete S.settings.remind[rm];
     save(); render(); toast(e.target.value ? `Напоминание: ${e.target.value}` : 'Напоминание убрано');
     return;
-  } const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
+  } const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
 document.addEventListener('input', e => {
   const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value);
-  const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; }
+  const fv = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = fv; }
   const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value;
   if (e.target.id === 'note') ui.noteDraft = e.target.value;
   if (e.target.id === 'txt') { if (ui.sheet) ui.sheet.draft = e.target.value; const n = document.getElementById('txt-n'); if (n) n.textContent = e.target.value.trim().length; }
