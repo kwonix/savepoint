@@ -176,7 +176,13 @@ function loadOf(ids) {
 const linkedNote = ids => QUEST_LINKS.filter(g => g.every(id => ids.includes(id))).map(g => g.map(id => Q[id].title.toLowerCase()).join(' + '));
 
 /* Окно отметки: можно ли отметить квест прямо сейчас */
+function nightLock(id, t) {
+  if (id === 'wake' && peekDay(addDays(t, -1)).nosleep && !doneOn('wake', t)) return 'Ночь без сна: подъём сегодня не засчитывается';
+  if (id === 'bed' && peekDay(t).nosleep && !doneOn('bed', t)) return 'Записано «не ложился»: отбой не засчитывается';
+  return '';
+}
 function windowFor(q, t, now = new Date()) {
+  const lock = nightLock(q.id, t); if (lock) return { open: false, why: lock };
   if (!q.from) return { open: true };
   const m = nowSh(now);
   let F = shMin(q.from), T = shMin(q.to); if (T === 0) T = 1440;
@@ -775,14 +781,13 @@ function actionBtn(kind, q, done, win, extra = '') {
 function questCard(q, t) {
   const d = peekDay(t), rec = d.q[q.id], done = !!rec;
   const win = windowFor(q, t);
-  let sub = q.afterWake && !activeOn('wake', t) ? 'Сразу после подъёма, до телефона. Отметить можно до 14:00.' : q.hint, extra = '';
+  let sub = q.afterWake && (!activeOn('wake', t) || nightLock('wake', t)) ? 'Сразу после подъёма, до телефона. Отметить можно до 14:00.' : q.hint, extra = '';
   const gain = rec ? ` · +${Math.round(20 * rec.v)} опыта${recCoins(rec) ? `, +${recCoins(rec)} монет` : ''}` : '';
   const proofTag = rec?.proof === 'photo' ? ' · 📷' : rec?.proof === 'timer' ? ' · ⏱' : rec?.fix ? ' · исправление' : '';
   const tg = sleepTargets(t);
   if (q.kind === 'wake') sub = done ? `Встал в ${rec.time}${gain}` : `Цель ${tg.wake}, полный опыт до ${addMin(tg.wake, 60)}`;
   else if (q.kind === 'bed') {
-    const ns = nosleepFor(t);
-    sub = done ? `Лёг в ${rec.time}${gain}` : ns ? 'Записано: не ложился' : `Цель: лечь до ${tg.bed}`;
+    sub = done ? `Лёг в ${rec.time}${gain}` : `Цель: лечь до ${tg.bed}`;
   }
   else if (q.kind === 'smoke') {
     const c = d.cigs || 0, lim = smokeLimit(t);
@@ -803,7 +808,7 @@ function questCard(q, t) {
       <div class="q-title">${esc(q.title)}</div>
       <div class="q-sub">${esc(sub)}</div>
     </div>
-    ${actionBtn(q.kind, q, done || (q.kind === 'bed' && nosleepFor(t)), win)}
+    ${actionBtn(q.kind, q, done, win)}
     ${extra}
   </article>`;
 }
@@ -853,13 +858,21 @@ function challengeCard(t) {
 
 function nosleepFor(k) { return peekDay(k).nosleep; }
 const morning = () => { const h = new Date().getHours(); return h >= 4 && h < 16; };
+function nosleepPossible() {
+  const nk = nightKey(), t = todayKey();
+  if (nosleepFor(nk)) return true;                       // уже записано — показываем запись
+  if (doneOn('bed', nk)) return false;                    // отметил отбой — значит ложился
+  if (nk !== t && doneOn('wake', t)) return false;        // отметил подъём — значит спал
+  return morning();
+}
 function nosleepBlock() {
   const nk = nightKey(), ns = nosleepFor(nk);
   if (ns) return `<div class="nosleep-note"><span>Ночь на ${fmtDay(addDays(nk, 1))}: не ложился${ns.tags?.length ? ' · ' + esc(ns.tags.join(', ')) : ''}</span><button class="linkbtn" data-a="nosleep-undo">убрать</button></div>`;
-  return `<button class="nosleep-btn" data-a="nosleep-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/><path d="M15 3l4 4M19 3l-4 4"/></svg>Не ложился этой ночью</button>`;
+  const lose = [activeOn('wake', todayKey()) && nk !== todayKey() ? 'подъём' : '', activeOn('bed', nk) ? 'отбой' : ''].filter(Boolean);
+  return `<button class="nosleep-btn" data-a="nosleep-sheet" data-lose="${lose.join(' и ')}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/><path d="M15 3l4 4M19 3l-4 4"/></svg>Не ложился этой ночью</button>`;
 }
 function sleepCard(t) {
-  const showNs = morning();
+  const showNs = nosleepPossible();
   if (!sleepOn()) {
     // модуль выключен: «не ложился» только утром и только если есть квесты сна
     return showNs && (activeOn('wake', t) || activeOn('bed', t)) ? `<section class="card sleep-mini">${nosleepBlock()}</section>` : '';
@@ -867,10 +880,12 @@ function sleepCard(t) {
   const tg = sleepTargets(t), d = peekDay(t), hrs = sleptHours(t);
   let html = `<section class="card sleep" data-stat="sleep"><div class="section-head"><span class="label">Сон</span>${tg.stage ? `<span class="muted small">${tg.done ? 'Переход завершён' : `Этап ${tg.stage} из ${tg.stages}`}</span>` : ''}</div>
     <div class="sleep-times"><div><span class="muted small">Отбой</span><b class="mono">${tg.bed}</b></div><div><span class="muted small">Подъём</span><b class="mono">${tg.wake}</b></div>${hrs ? `<div><span class="muted small">Спал</span><b class="mono">${hrs} ч</b></div>` : ''}</div>`;
-  if (S.sleep.checkin && showNs && !nosleepFor(nightKey())) {
+  if (S.sleep.checkin && morning() && !nosleepFor(nightKey())) {
     html += d.sleepQ ? `<p class="small">Как спалось: <b>${SLEEP_Q[d.sleepQ - 1]}</b> <button class="linkbtn" data-a="sleepq-undo">изменить</button></p>`
       : `<div class="field"><span>Как спалось?</span><div class="sq">${SLEEP_Q.map((n, i) => `<button class="pill" data-a="sleepq" data-v="${i + 1}">${n}</button>`).join('')}</div></div>`;
   }
+  const nextDay = nowSh() < shMin(tg.wake) ? t : addDays(t, 1), alarm = sleepTargets(nextDay).wake;
+  html += `<div class="alarm"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.5 1.5M5 4 2.5 6.5M19 4l2.5 2.5"/></svg><span>Будильник ${nextDay === t ? 'на сегодня' : 'на завтра'}: <b class="mono">${alarm}</b>${alarm !== tg.wake ? ' · время сдвинулось по плану' : ''}</span></div>`;
   if (!S.sleep.shift) html += `<button class="linkbtn" data-a="shift-sheet" style="align-self:flex-start">Перейти на этот режим плавно</button>`;
   if (showNs) html += nosleepBlock();
   return html + '</section>';
@@ -1307,8 +1322,14 @@ function sleepSettings() {
   h += sl.shift && plan
     ? `<div class="kv"><span>Плавный переход: ${tg.done ? 'завершён' : `этап ${tg.stage} из ${plan.stages}, финиш ${fmtDay(plan.end)}`}</span><button class="linkbtn" data-a="shift-stop">остановить</button></div>`
     : `<div class="kv"><span>Плавный переход не запущен</span><button class="linkbtn" data-a="shift-sheet">настроить</button></div>`;
-  h += `<div class="label">Будильники в Календарь</div><div class="row"><button class="btn sm ghost" data-a="alarms" data-k="wake">Подъём</button><button class="btn sm ghost" data-a="alarms" data-k="bed">Отбой</button><button class="btn sm ghost" data-a="alarms" data-k="both">Оба</button></div>
-    <p class="muted small">Календарь пришлёт уведомление в нужное время${sl.shift ? ' по каждому этапу перехода' : ''}. Настоящий будильник в «Часах» веб-приложение поставить не может, его включай сам.</p></section>`;
+  if (sl.shift && plan && !tg.done) {
+    const rows = []; for (let st = 1; st <= plan.stages; st++) {
+      const a = addDays(sl.shift.start, (st - 1) * sl.shift.every), b = addDays(a, sl.shift.every - 1), x = sleepTargets(a);
+      rows.push(`<div class="kv${st === tg.stage ? ' now' : ''}"><span>${fmtDay(a)}${b !== a ? '–' + fmtDay(b) : ''}</span><span class="mono">${x.bed} → ${x.wake}</span></div>`);
+    }
+    h += `<div class="label">План: отбой → будильник</div><div class="plan">${rows.join('')}</div>`;
+  }
+  h += `<p class="muted small">Будильник ставь в «Часах» на время подъёма. На главном экране в карточке сна всегда написано, на сколько его ставить сегодня.</p></section>`;
   return h;
 }
 
@@ -1348,8 +1369,8 @@ function viewSettings() {
   html += sleepSettings();
   const st = S.settings;
   html += `<section class="card"><h2>Режим и сводка</h2>
-    <div class="grid2"><label class="field"><span>Хочу вставать в</span><input id="s-wake" type="time" value="${st.wake}"></label>
-    <label class="field"><span>Хочу ложиться в</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
+    <div class="grid2"><label class="field"><span>Хочу ложиться в</span><input id="s-bed" type="time" value="${st.bed}"></label>
+    <label class="field"><span>Хочу вставать в</span><input id="s-wake" type="time" value="${st.wake}"></label></div>
     <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone === 'neutral' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
     <button class="btn sm" data-a="save-settings">Сохранить</button>
     <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
@@ -1402,7 +1423,7 @@ function viewSheet() {
       `);
   }
   if (sh.type === 'nosleep') { const sel = sh.tags || []; const nk = nightKey(); return sheetWrap('Не ложился', `<h2>Не ложился спать</h2>
-    <p class="muted small">Запишется на ночь ${fmtDay(nk)} → ${fmtDay(addDays(nk, 1))}. Без штрафа, просто чтобы видеть в отчёте.</p>
+    <p class="muted small">Запишется на ночь ${fmtDay(nk)} → ${fmtDay(addDays(nk, 1))}. ${sh.lose ? `Квест${sh.lose.includes(' и ') ? 'ы' : ''} «${esc(sh.lose)}» за эту ночь не засчита${sh.lose.includes(' и ') ? 'ются' : 'ется'}: опыта и монет за ${sh.lose.includes(' и ') ? 'них' : 'него'} не будет. ` : ''}Отдельного штрафа нет, запись нужна, чтобы видеть закономерности в отчёте.</p>
     <div class="chips">${NOSLEEP_TAGS.map(tg => `<button class="pill${sel.includes(tg) ? ' on' : ''}" data-a="ns-tag" data-t="${esc(tg)}">${esc(tg)}</button>`).join('')}</div>
     <input type="text" id="ns-text" placeholder="Что было? Одна строка" maxlength="160" value="${esc(sh.text || '')}">
     <button class="btn" data-a="nosleep-save">Записать</button>`); }
@@ -1558,36 +1579,6 @@ function icsFor(ids) {
   });
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Savepoint//RU', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n');
 }
-function sleepIcs(kind) {
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
-  const sh = S.sleep.shift, plan = shiftPlan(), t = todayKey(), ev = [];
-  const add = (dayK, time, count, title, desc, before) => {
-    const [h, m] = time.split(':').map(Number);
-    let dk = dayK; if (h < DAY_SHIFT_H) dk = addDays(dayK, 1);     // время после полуночи — уже следующий календарный день
-    ev.push(['BEGIN:VEVENT', `UID:savepoint-sleep-${kind}-${dk}-${time}-${Math.random().toString(36).slice(2)}@savepoint`, `DTSTAMP:${stamp}`,
-      `DTSTART:${dk.replace(/-/g, '')}T${pad(h)}${pad(m)}00`, 'DURATION:PT5M', count ? `RRULE:FREQ=DAILY;COUNT=${count}` : 'RRULE:FREQ=DAILY',
-      `SUMMARY:${title}`, `DESCRIPTION:${desc}`, 'BEGIN:VALARM', 'ACTION:DISPLAY', `TRIGGER:-PT${before}M`, `DESCRIPTION:${title}`, 'END:VALARM', 'END:VEVENT'].join('\r\n'));
-  };
-  const both = (dayK, tg, count) => {
-    if (kind !== 'bed') add(dayK, tg.wake, count, 'Сейв: подъём', 'Время вставать', 0);
-    if (kind !== 'wake') add(dayK, tg.bed, count, 'Сейв: скоро отбой', `Отбой в ${tg.bed}. Закругляйся`, 30);
-  };
-  if (sh && plan && !sleepTargets(t).done) {
-    const curStage = sleepTargets(t).stage;
-    for (let st = curStage; st <= plan.stages; st++) {
-      const startK = st === curStage ? t : addDays(sh.start, (st - 1) * sh.every);
-      const tg = sleepTargets(startK), endK = addDays(sh.start, st * sh.every);
-      both(startK, tg, Math.max(1, daysBetween(startK, endK)));
-    }
-    both(plan.end, { wake: S.settings.wake, bed: S.settings.bed }, 0);
-  } else both(t, { wake: S.settings.wake, bed: S.settings.bed }, 0);
-  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Savepoint//RU', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n');
-}
-function openSleepIcs(kind) {
-  const file = new File([sleepIcs(kind)], 'savepoint-sleep.ics', { type: 'text/calendar' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
-  ui.sheet = { type: 'ics', file, canShare: !!(navigator.canShare && navigator.canShare({ files: [file] })) }; render();
-}
 function openIcs(ids) {
   const text = icsFor(ids);
   const file = new File([text], 'savepoint.ics', { type: 'text/calendar' });
@@ -1703,7 +1694,6 @@ document.addEventListener('click', async e => {
     }
     case 'unmark': {
       const id = el.dataset.id;
-      if (id === 'bed' && nosleepFor(t) && !doneOn('bed', t)) { toast('Записано «не ложился». Убери запись, чтобы отметить отбой'); return; }
       if (ui.unmarkAsk !== id) { ui.unmarkAsk = id; toast('Нажми ещё раз, чтобы снять отметку'); setTimeout(() => { if (ui.unmarkAsk === id) ui.unmarkAsk = null; }, 3000); return; }
       ui.unmarkAsk = null; delete day(t).q[id]; save(); render(); toast('Отметка снята'); return;
     }
@@ -1770,7 +1760,7 @@ document.addEventListener('click', async e => {
     case 'tag': { const d = day(addDays(t, -1)); d.tags ||= []; const tg = el.dataset.t; d.tags = d.tags.includes(tg) ? d.tags.filter(x => x !== tg) : d.tags.concat(tg); ui.noteDraft = val('note'); save(); render(); return; }
     case 'save-note': { const d = day(addDays(t, -1)); d.note = val('note').trim(); d.noted = true; ui.noteDraft = ''; save(); render(); toast('Записал. Сегодня новый день'); return; }
     case 'skip-note': day(addDays(t, -1)).noted = true; save(); render(); return;
-    case 'nosleep-sheet': ui.sheet = { type: 'nosleep', tags: [], text: '' }; render(); return;
+    case 'nosleep-sheet': ui.sheet = { type: 'nosleep', tags: [], text: '', lose: el.dataset.lose || '' }; render(); return;
     case 'ns-tag': { const sh = ui.sheet, tg = el.dataset.t; sh.text = val('ns-text'); sh.tags = sh.tags.includes(tg) ? sh.tags.filter(x => x !== tg) : sh.tags.concat(tg); render(); return; }
     case 'nosleep-save': {
       const sh = ui.sheet, text = val('ns-text').trim();
@@ -1792,7 +1782,7 @@ document.addEventListener('click', async e => {
       const plan = shiftPlan(); ui.sheet = null; save(); render(); toast(`План готов: ${plan.stages} ${plural(plan.stages, 'этап', 'этапа', 'этапов')}, финиш ${fmtDay(plan.end)}`, true); return;
     }
     case 'shift-stop': S.sleep.shift = null; save(); render(); toast('Переход остановлен, цели — твой желаемый режим'); return;
-    case 'alarms': openSleepIcs(el.dataset.k); return;
+
     case 'sprint-keep': {
       S.sprints.push({ ts: Date.now(), day: t, kept: true }); ui.sheet = null; save();
       const n = sprintsIn(weekOf(t));
