@@ -1649,6 +1649,19 @@ async function doImport() {
   } catch (err) { toast('Это не похоже на копию из приложения. Проверь текст'); }
 }
 
+/* ================= жесты ================= */
+// Pinch-зум в Safari: события gesture* есть только на iOS
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+// Двойной тап: на iOS touch-action не всегда срабатывает в standalone-режиме
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => { const now = Date.now(); if (now - lastTouchEnd < 300 && !e.target.closest('input, textarea, select')) e.preventDefault(); lastTouchEnd = now; }, { passive: false });
+// Резинка, когда содержимое помещается на экран
+document.addEventListener('touchmove', e => {
+  if (e.touches.length > 1) { e.preventDefault(); return; }
+  if (document.body.classList.contains('locked') && !e.target.closest('.sheet')) { e.preventDefault(); return; }
+  if (document.documentElement.scrollHeight <= window.innerHeight + 1 && !e.target.closest('.sheet, .xscroll, textarea')) e.preventDefault();
+}, { passive: false });
+
 /* ================= запуск ================= */
 document.getElementById('tabbar').innerHTML = `<nav class="tabbar-in">${[['today', 'Сегодня'], ['quests', 'Квесты'], ['week', 'Неделя'], ['report', 'Отчёт'], ['me', 'Профиль']].map(([t, n]) => `<button class="tab" data-a="tab" data-t="${t}">${ICON[t]}<span>${n}</span></button>`).join('')}</nav>`;
 S = load();

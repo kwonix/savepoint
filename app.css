@@ -44,7 +44,13 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+/* Приложение, а не страница: без резинки, зума двойным тапом, выделения и меню копирования */
+html, body { overscroll-behavior-y: none; }
+* { touch-action: manipulation; -webkit-touch-callout: none; }
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, select, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+body.locked { position: fixed; left: 0; right: 0; overflow: hidden; }
 body {
   margin: 0;
   background: var(--bg);
