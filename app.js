@@ -357,7 +357,7 @@ function weekScore(w) {
     const act = CATALOG.filter(q => activeOn(q.id, k));
     const done = anyDone(k), shield = shieldDays.has(k);
     if (done || shield) stable++;
-    for (const q of act) { perQuest[q.id] ||= { done: 0, days: 0 }; perQuest[q.id].days++; if (d.q[q.id]) perQuest[q.id].done++; }
+    for (const q of act) { if (k === t && !d.q[q.id]) continue; perQuest[q.id] ||= { done: 0, days: 0 }; perQuest[q.id].days++; if (d.q[q.id]) perQuest[q.id].done++; }
     for (const id in d.q) { marks++; if (['photo', 'timer', 'text'].includes(d.q[id].proof)) verified++; }
     if (d.card?.done) { cards++; marks++; if (d.card.done.proof) verified++; }
     if (shield || !act.length || (k === t && !done)) continue;
@@ -925,7 +925,7 @@ function viewToday() {
   const next = allSide().find(s => !s.repeat && !(S.side[s.id] || []).length);
   if (next) html += `<section class="card"><span class="label">Сайд-квест · один раз</span>
     <div class="side" style="padding:0"><div class="side-title">${esc(next.title)}</div><span class="side-xp">+${next.xp}</span></div>
-    <div class="row"><button class="btn sm" data-a="side" data-id="${next.id}">Сделал</button><button class="linkbtn" data-a="tab" data-t="quests">Все сайд-квесты</button></div></section>`;
+    <div class="row"><button class="btn sm" data-a="side" data-id="${next.id}">Сделал</button><button class="linkbtn" data-a="go-side">Все сайд-квесты</button></div></section>`;
   return html;
 }
 
@@ -1023,7 +1023,7 @@ function viewQuests() {
   html += `</section>`;
 
   const w = weekOf(t);
-  html += `<section class="card"><div class="section-head"><h2>Сайд-квесты</h2><span class="label">разовые</span></div><div>`;
+  html += `<section class="card" id="side-quests"><div class="section-head"><h2>Сайд-квесты</h2><span class="label">разовые</span></div><div>`;
   for (const s of allSide()) {
     const ds = S.side[s.id] || [];
     const done = s.repeat === 'week' ? ds.some(d => d >= w) : ds.length > 0;
@@ -1080,13 +1080,13 @@ function viewWeek() {
       for (let i = 0; i < 7; i++) {
         const k = addDays(w, i);
         let cls = 'cell';
-        if (k > t) cls += ' future'; else if (k < S.created) cls += ' off';
+        if (k > t) cls += ' future'; else if (k < S.created) cls += ' pre';
         else { const s = f(k); cls += s ? ' ' + s : shieldDays.has(k) ? ' shield' : ''; }
         if (peekDay(k).nosleep && name === rows[0][0]) cls += ' ns';
         html += `<span class="${cls}" data-stat="${stat}" title="${fmtDay(k)}"></span>`;
       }
     }
-    html += `</div></div><p class="muted small">Полная клетка — в срок, бледная — с опозданием или вполсилы, пунктир — день закрыт щитом.</p></section>`;
+    html += `</div></div><p class="muted small">Полная клетка — в срок, бледная — с опозданием или вполсилы, пунктир — день закрыт щитом. Дни до начала игры и невзятые квесты не закрашены.</p></section>`;
   }
   html += `<section class="card"><div class="section-head"><h2>Сводка</h2><span class="label">только для тебя</span></div><div class="lines">${summaryLines(w, sc).map(l => `<p>${esc(l)}</p>`).join('')}</div></section>`;
 
@@ -1139,26 +1139,67 @@ function summaryLines(w, sc) {
 
 /* ================= отчёт ================= */
 function viewReport() {
-  const t = todayKey(), x = xpAll(), si = streakInfo();
+  const t = todayKey(), si = streakInfo();
   const weeks = []; for (let w = weekOf(S.created); w <= weekOf(t); w = addDays(w, 7)) weeks.push(w);
   const scores = weeks.map(w => ({ w, s: weekScore(w) })).filter(o => o.s);
   const done = scores.filter(o => !o.s.live);
   const avg = done.length ? Math.round(done.reduce((a, o) => a + o.s.total, 0) / done.length) : null;
   const played = daysBetween(S.created, t) + 1;
   const allKeys = []; for (let k = S.created; k <= t; k = addDays(k, 1)) allKeys.push(k);
-  const nights = allKeys.filter(k => peekDay(k).nosleep);
-  const cardsDone = allKeys.filter(k => peekDay(k).card?.done).length;
+  const D = k => peekDay(k);
+  const nights = allKeys.filter(k => D(k).nosleep);
+  const cardsDone = allKeys.filter(k => D(k).card?.done);
+  const checks = allKeys.filter(k => D(k).sleepQ);
+  const hours = allKeys.map(sleptHours).filter(h => h);
+  const questMarks = allKeys.reduce((a, k) => a + Object.keys(D(k).q).length, 0);
+  const bossHits = S.bosses.reduce((a, b) => a + b.hits.length, 0);
+  const sleepUse = checks.length + nights.length + (sleepOn() ? 5 : 0);
+  const ever = CATALOG.filter(q => S.quests[q.id]);
 
-  let html = `<header class="top"><span class="label">Отчёт</span><h1>Как ты справляешься</h1><p class="muted">Всё, что ты делал с ${fmtDay(S.created)}. Только для тебя.</p></header>`;
-  html += `<section class="tiles">
-    ${tile(played, plural(played, 'день в игре', 'дня в игре', 'дней в игре'))}${tile(si.best, 'лучшая серия')}
-    ${tile(avg ?? '—', 'средняя оценка недели')}${tile(cardsDone, 'карт дня')}
-    ${tile(Object.keys(S.ach).length + '/' + ACHIEVEMENTS.length, 'ачивок')}${tile(nights.length, plural(nights.length, 'ночь без сна', 'ночи без сна', 'ночей без сна'))}
-  </section>`;
+  // Модули отчёта: показываем только то, чем человек пользуется, и сортируем по тому, насколько активно
+  const mods = [
+    { id: 'habits', name: 'квесты', use: questMarks, show: ever.length > 0, html: () => `<section class="card"><h2>Привычки</h2><div class="parts">${ever.map(q => {
+        let days = 0, d = 0; for (const k of allKeys) if (activeOn(q.id, k) && k < t) { days++; if (doneOn(q.id, k)) d++; }
+        const pct = days ? Math.round(d / days * 100) : 0;
+        return `<div class="part" data-stat="${q.stat}"><span>${esc(q.title)}${qStatus(q.id) === 'auto' ? ' ★' : ''}</span><span class="mono">${d}/${days} · ${pct}%</span><div class="bar stat-bar"><i style="width:${pct}%"></i></div></div>`;
+      }).join('')}</div><p class="muted small">Сегодняшний день не считается, пока не закончился.</p></section>` },
+    { id: 'bosses', name: 'боссы', use: bossHits * 2, show: S.bosses.length > 0, html: () => `<section class="card"><h2>Боссы</h2><div class="parts">${S.bosses.map(b => {
+        const p = Math.round(bossPct(b) * 100), T = BT[b.type], st = bossState(b);
+        const det = T.mode === 'sum' ? `${fmtN(st.dealt, b.unit)} из ${fmtN(b.total, b.unit)}` : T.mode === 'measure' ? `${fmtN(st.cur, b.unit)} → ${fmtN(b.target, b.unit)}` : `${st.streak} из ${b.total} дн.`;
+        return `<div class="part" data-stat="${b.stat}"><span>${esc(b.name)}${b.defeated ? ' · побеждён ' + fmtDay(b.defeated) : ''}<br><span class="muted small">${det} · ударов: ${b.hits.length}</span></span><span class="mono">${p}%</span><div class="bar stat-bar"><i style="width:${p}%"></i></div></div>`;
+      }).join('')}</div></section>` },
+    { id: 'sleep', name: 'сон', use: sleepUse, show: sleepOn() || checks.length > 0 || nights.length > 0, html: () => {
+        const avgQ = checks.length ? checks.reduce((a, k) => a + D(k).sleepQ, 0) / checks.length : null;
+        const avgH = hours.length ? Math.round(hours.reduce((a, h) => a + h, 0) / hours.length * 10) / 10 : null;
+        const tg = sleepTargets(), plan = shiftPlan();
+        const qd = [0, 0, 0, 0, 0]; checks.forEach(k => qd[D(k).sleepQ - 1]++);
+        return `<section class="card" data-stat="sleep"><h2>Сон</h2><div class="tiles">
+          ${tile(avgQ ? SLEEP_Q[Math.round(avgQ) - 1] : '—', 'обычно спится')}${tile(avgH ? avgH + ' ч' : '—', 'в среднем сна')}${tile(nights.length, plural(nights.length, 'ночь без сна', 'ночи без сна', 'ночей без сна'))}</div>
+          ${checks.length ? `<div class="parts">${SLEEP_Q.map((n, i) => `<div class="part"><span>${n}</span><span class="mono">${qd[i]}</span><div class="bar stat-bar"><i style="width:${(qd[i] / checks.length * 100).toFixed(0)}%"></i></div></div>`).join('')}</div>` : ''}
+          ${plan ? `<p class="small">Плавный переход: ${tg.done ? 'завершён' : `этап ${tg.stage} из ${plan.stages}, сейчас ${tg.bed} → ${tg.wake}`}.</p>` : ''}
+          ${!hours.length && sleepOn() ? '<p class="muted small">Часы сна считаются, когда отмечены и отбой, и подъём.</p>' : ''}</section>`;
+      } },
+    { id: 'cards', name: 'карты дня', use: cardsDone.length, show: cardsDone.length > 0, html: () => {
+        const by = { c: 0, r: 0, l: 0 }; cardsDone.forEach(k => { const c = CARD[D(k).card.id]; if (c) by[c.rarity]++; });
+        const rer = cardsDone.filter(k => D(k).card.rerolled).length;
+        return `<section class="card"><h2>Карты дня</h2><div class="tiles">${tile(by.c, 'обычных')}${tile(by.r, 'редких')}${tile(by.l, 'легендарных')}</div>
+          <p class="muted small">Выполнено ${cardsDone.length} из ${allKeys.length}. Перетянуто и всё равно сделано: ${rer}.</p></section>`;
+      } },
+  ].filter(m => m.show).sort((a, b) => b.use - a.use);
 
-  // график недель
+  const top = mods.filter(m => m.use > 0).slice(0, 2).map(m => m.name);
+  let html = `<header class="top"><span class="label">Отчёт</span><h1>Как ты справляешься</h1><p class="muted">${top.length ? `Больше всего ты занимаешься: ${top.join(' и ')}. ` : ''}Всё с ${fmtDay(S.created)}, только для тебя.</p></header>`;
+
+  const tiles = [tile(played, plural(played, 'день в игре', 'дня в игре', 'дней в игре')), tile(si.best, 'лучшая серия')];
+  if (avg !== null) tiles.push(tile(avg, 'средняя оценка недели'));
+  if (S.bosses.some(b => b.defeated)) tiles.push(tile(S.bosses.filter(b => b.defeated).length, 'боссов побеждено'));
+  if (cardsDone.length) tiles.push(tile(cardsDone.length, 'карт дня'));
+  if (Object.keys(S.ach).length) tiles.push(tile(Object.keys(S.ach).length + '/' + ACHIEVEMENTS.length, 'ачивок'));
+  html += `<section class="tiles">${tiles.slice(0, 6).join('')}</section>`;
+
+  // график недель — когда есть хотя бы две недели
   const last = scores.slice(-12);
-  if (last.length) {
+  if (last.length >= 2) {
     const W = 320, H = 150, pad = 22, bw = Math.min(28, (W - pad) / last.length - 6);
     const bars = last.map((o, i) => {
       const x0 = pad + i * ((W - pad) / last.length) + 3, h = (o.s.total / 100) * (H - 30);
@@ -1166,37 +1207,24 @@ function viewReport() {
         <text x="${(x0 + bw / 2).toFixed(1)}" y="${(H - 22 - h).toFixed(1)}" class="v">${o.s.total}</text>
         <text x="${(x0 + bw / 2).toFixed(1)}" y="${H - 4}" class="ax">${isoWeekNo(o.w)}</text>`;
     }).join('');
-    const grid = [40, 60, 80].map(v => { const y = H - 18 - (v / 100) * (H - 30); return `<line x1="${pad}" x2="${W}" y1="${y}" y2="${y}"/><text x="0" y="${y + 3}" class="ax" text-anchor="start">${v}</text>`; }).join('');
+    const grid = [40, 60, 80].map(v => { const y = H - 18 - (v / 100) * (H - 30); return `<line x1="${pad}" x2="${W}" y1="${y}" y2="${y}"/><text x="0" y="${y + 3}" class="ax yl">${v}</text>`; }).join('');
     html += `<section class="card"><div class="section-head"><h2>Оценки по неделям</h2><span class="label">номер недели</span></div>
       <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Оценки недель">${grid}${bars}</svg></section>`;
   }
 
-  // привычки
-  const ever = CATALOG.filter(q => S.quests[q.id]);
-  if (ever.length) {
-    html += `<section class="card"><h2>Привычки за всё время</h2><div class="parts">${ever.map(q => {
-      let days = 0, d = 0; for (const k of allKeys) if (activeOn(q.id, k) && k < t) { days++; if (doneOn(q.id, k)) d++; }
-      const pct = days ? Math.round(d / days * 100) : 0;
-      return `<div class="part" data-stat="${q.stat}"><span>${esc(q.title)}${qStatus(q.id) === 'auto' ? ' ★' : ''}</span><span class="mono">${d}/${days} · ${pct}%</span><div class="bar stat-bar"><i style="width:${pct}%"></i></div></div>`;
-    }).join('')}</div><p class="muted small">Сегодняшний день не считается, пока не закончился.</p></section>`;
-  }
+  html += mods.map(m => m.html()).join('');
 
-  // боссы
-  if (S.bosses.length) html += `<section class="card"><h2>Боссы</h2><div class="parts">${S.bosses.map(b => {
-    const p = Math.round(bossPct(b) * 100);
-    return `<div class="part" data-stat="${b.stat}"><span>${esc(b.name)}${b.defeated ? ' · побеждён ' + fmtDay(b.defeated) : ''}</span><span class="mono">${p}%</span><div class="bar stat-bar"><i style="width:${p}%"></i></div></div>`;
-  }).join('')}</div></section>`;
-
-  // причины
+  // причины — только если есть что показать
   const skip = {}, ns = {};
-  for (const k of allKeys) { for (const tg of (peekDay(k).tags || [])) skip[tg] = (skip[tg] || 0) + 1; for (const tg of (peekDay(k).nosleep?.tags || [])) ns[tg] = (ns[tg] || 0) + 1; }
+  for (const k of allKeys) { for (const tg of (D(k).tags || [])) skip[tg] = (skip[tg] || 0) + 1; for (const tg of (D(k).nosleep?.tags || [])) ns[tg] = (ns[tg] || 0) + 1; }
   const list = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span class="mono">${v}</span></div>`).join('');
-  html += `<section class="card"><h2>Почему не получалось</h2>
-    <div class="label">Пропущенные дни</div>${Object.keys(skip).length ? list(skip) : '<p class="muted small">Пока не записано ни одной причины.</p>'}
-    <div class="label">Ночи без сна</div>${Object.keys(ns).length ? list(ns) : '<p class="muted small">Ни одной. Так держать.</p>'}</section>`;
+  if (Object.keys(skip).length || Object.keys(ns).length) html += `<section class="card"><h2>Почему не получалось</h2>
+    ${Object.keys(skip).length ? `<div class="label">Пропущенные дни</div>${list(skip)}` : ''}
+    ${Object.keys(ns).length ? `<div class="label">Ночи без сна</div>${list(ns)}` : ''}</section>`;
 
-  // ачивки
-  html += `<section class="card"><div class="section-head"><h2>Ачивки</h2><span class="label">выдаются сами</span></div><div class="achs">${ACHIEVEMENTS.map(a => {
+  // ачивки: полученные сверху
+  const achSorted = ACHIEVEMENTS.slice().sort((a, b) => (S.ach[b.id] ? 1 : 0) - (S.ach[a.id] ? 1 : 0));
+  html += `<section class="card"><div class="section-head"><h2>Ачивки</h2><span class="label">${Object.keys(S.ach).length} из ${ACHIEVEMENTS.length}</span></div><div class="achs">${achSorted.map(a => {
     const got = S.ach[a.id];
     return `<div class="ach${got ? ' got' : ''}"><div class="ach-ico">${got ? '★' : ICON.lock}</div><div style="min-width:0"><div class="ach-t">${esc(a.title)}</div><div class="muted small">${esc(a.desc)}${got ? ` · ${fmtDay(got)}` : ''}</div></div></div>`;
   }).join('')}</div></section>`;
@@ -1215,6 +1243,7 @@ function journalDay(k) {
   const texts = [];
   for (const id of ['journal', 'spendlog']) if (d.q[id]?.text) texts.push(`<p class="jtext"><span class="muted">${Q[id].title}:</span> ${esc(d.q[id].text)}</p>`);
   if (d.tags?.length || d.note) texts.push(`<p class="jtext"><span class="muted">Пропуск:</span> ${esc([...(d.tags || []), d.note].filter(Boolean).join(', '))}</p>`);
+  if (d.sleepQ) texts.push(`<p class="jtext"><span class="muted">Сон:</span> ${SLEEP_Q[d.sleepQ - 1].toLowerCase()}${sleptHours(k) ? `, ${sleptHours(k)} ч` : ''}</p>`);
   if (d.nosleep) texts.push(`<p class="jtext warn-t"><span class="muted">Не ложился:</span> ${esc([...(d.nosleep.tags || []), d.nosleep.text].filter(Boolean).join(', '))}</p>`);
   const photosHere = [...Object.keys(d.q).filter(id => d.q[id].proof === 'photo').map(id => `${k}|q:${id}`), ...(d.card?.done?.proof === 'photo' ? [`${k}|card`] : [])];
   return `<div class="jday"><div class="jhead"><b>${fmtDayLong(k)}</b>${k === todayKey() ? '<span class="badge">сегодня</span>' : ''}</div>
@@ -1642,6 +1671,7 @@ document.addEventListener('click', async e => {
   const t = todayKey(), px = xpAll().total, pc = coins();
 
   switch (a) {
+    case 'go-side': ui.tab = 'quests'; ui.sub = null; render(); requestAnimationFrame(() => { const el2 = document.getElementById('side-quests'); if (el2) window.scrollTo(0, el2.getBoundingClientRect().top + window.scrollY - 12); }); return;
     case 'quote-next': ui.quoteShift = (ui.quoteShift || 0) + 1; render(); return;
     case 'chest': { const e = day(t).ev; if (!e || e.claimed) return; e.claimed = true; afterChange(px, pc); return; }
     case 'tab': ui.tab = el.dataset.t; ui.week = null; ui.sub = null; window.scrollTo(0, 0); render(); return;
