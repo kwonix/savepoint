@@ -169,6 +169,14 @@ p { margin: 0; }
 .btn:active { transform: translateY(1px); }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .row > .grow { flex: 1 1 140px; min-width: 0; }
+.field { min-width: 0; }
+input[type="time"] { text-align: left; }
+input[type="time"]::-webkit-date-and-time-value { text-align: left; }
+/* полоса под статус-баром айфона, чтобы контент не залезал под часы */
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; z-index: 25;
+  height: env(safe-area-inset-top, 0px); background: var(--bg);
+}
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .pill {
   padding: 8px 12px; border-radius: 99px; border: 1px solid var(--line);
@@ -178,7 +186,8 @@ p { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: .82rem; color: var(--muted); }
 input[type="text"], input[type="number"], input[type="time"], textarea, select {
-  width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px;
+  width: 100%; min-width: 0; max-width: 100%; display: block;
+  -webkit-appearance: none; appearance: none; min-height: 46px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--line); background: var(--surface-2);
   font-size: 16px;
 }

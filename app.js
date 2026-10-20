@@ -351,8 +351,8 @@ function viewOnboarding() {
       <label class="field grow"><span>Во сколько встаёшь</span><input id="o-wake" type="time" value="09:00" required></label>
       <label class="field grow"><span>Во сколько ложишься</span><input id="o-bed" type="time" value="01:00" required></label>
     </div>
-    <label class="field"><span>Долг по кредитке, ₽ (0, если не нужен босс)</span><input id="o-debt" type="number" inputmode="numeric" min="0" step="100" placeholder="например, 300000"></label>
-    <label class="field"><span>Сколько в неделю вносить на кредитку, ₽</span><input id="o-weekly" type="number" inputmode="numeric" min="0" step="100" placeholder="например, 2000"></label>
+    <label class="field"><span>Долг по кредитке, ₽ (0, если не нужен босс)</span><input id="o-debt" type="number" inputmode="numeric" min="0" step="1" placeholder="например, 300000"></label>
+    <label class="field"><span>Сколько в неделю вносить на кредитку, ₽</span><input id="o-weekly" type="number" inputmode="numeric" min="0" step="1" placeholder="например, 2000"></label>
     <div class="field"><span>Тон недельной сводки</span>
       <div class="seg" id="o-tone"><button type="button" class="on" data-v="roast">С подколом</button><button type="button" data-v="neutral">Нейтральный</button></div>
     </div>
@@ -485,7 +485,7 @@ function bossCard(compact) {
     <div class="boss-top"><span class="boss-name">Босс: Кредитка</span><span class="mono" style="font-size:.85rem">${rub(left)}</span></div>
     <div class="hp" role="img" aria-label="Осталось ${Math.round(pct)}%"><i style="width:${pct.toFixed(1)}%"></i></div>
     <div class="hp-meta"><span>Урон за неделю: ${rub(paidW)}${S.boss.weekly ? ' из ' + rub(S.boss.weekly) : ''}</span><span>${(100 - pct).toFixed(1)}% побеждено</span></div>
-    <div class="row"><input class="grow" id="pay" type="number" inputmode="numeric" min="0" step="100" placeholder="Внёс на кредитку, ₽"><button class="btn sm" data-a="pay">Нанести урон</button></div>
+    <div class="row"><input class="grow" id="pay" type="number" inputmode="numeric" min="0" step="1" placeholder="Внёс на кредитку, ₽"><button class="btn sm" data-a="pay">Нанести урон</button></div>
     ${compact ? '' : (S.boss.paid.length ? `<div class="muted" style="font-size:.82rem">Последние: ${S.boss.paid.slice(-4).reverse().map((p, i) => `${fmtDay(p.day)} — ${rub(p.amount)}`).join(' · ')} <button class="linkbtn" data-a="undo-pay">отменить последний</button></div>` : '')}
   </section>`;
 }
@@ -615,10 +615,10 @@ function viewMe() {
   html += `<section class="card"><h2>Настройки</h2>
     <div class="row"><label class="field grow"><span>Подъём</span><input id="s-wake" type="time" value="${st.wake}"></label>
     <label class="field grow"><span>Отбой</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
-    <div class="row"><label class="field grow"><span>Долг всего, ₽</span><input id="s-debt" type="number" inputmode="numeric" min="0" step="100" value="${S.boss.total || ''}"></label>
-    <label class="field grow"><span>Цель в неделю, ₽</span><input id="s-weekly" type="number" inputmode="numeric" min="0" step="100" value="${S.boss.weekly || ''}"></label></div>
+    <div class="row"><label class="field grow"><span>Долг всего, ₽</span><input id="s-debt" type="number" inputmode="numeric" min="0" step="1" value="${S.boss.total || ''}"></label>
+    <label class="field grow"><span>Цель в неделю, ₽</span><input id="s-weekly" type="number" inputmode="numeric" min="0" step="1" value="${S.boss.weekly || ''}"></label></div>
     <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone !== 'roast' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
-    <div class="field"><span>Тема</span><div class="seg" style="grid-template-columns:repeat(3,1fr)">${[['auto', 'Как в системе'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${(st.theme || 'auto') === v ? 'on' : ''}" data-a="theme" data-v="${v}">${n}</button>`).join('')}</div></div>
+    <div class="field"><span>Тема</span><div class="seg" style="grid-template-columns:repeat(3,1fr)">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${(st.theme || 'auto') === v ? 'on' : ''}" data-a="theme" data-v="${v}">${n}</button>`).join('')}</div></div>
     <button class="btn sm" data-a="save-settings">Сохранить настройки</button>
     <p class="muted" style="font-size:.8rem">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p>
   </section>`;
@@ -855,5 +855,11 @@ let lastKey = todayKey();
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S && todayKey() !== lastKey) { lastKey = todayKey(); evolve(); save(); render(); } });
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  try { navigator.serviceWorker?.register('./sw.js').catch(() => { }); } catch (e) { /* превью без офлайна */ }
+  try {
+    // когда приходит новая версия приложения, один раз перезагружаемся, чтобы её показать
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+    navigator.serviceWorker.register('./sw.js').then(r => r.update()).catch(() => { });
+  } catch (e) { /* превью без офлайна */ }
 }
