@@ -1053,7 +1053,7 @@ function viewQuests() {
     return `<div class="aq" data-stat="${q.stat}"><div class="row" style="justify-content:space-between"><div style="min-width:0"><div class="side-title">${esc(q.title)}</div><span class="muted small">с ${fmtDay(since)} · до автопилота ${have}/${AUTO_NEED}</span></div>
       <button class="linkbtn" data-a="q-drop" data-id="${q.id}">убрать</button></div>
       <div class="mini"><i style="width:${Math.min(100, have / AUTO_NEED * 100)}%"></i></div>
-      <div class="row remind"><span class="muted small">Напоминание</span><input type="time" id="rm-${q.id}" value="${rem}" aria-label="Время напоминания"><button class="btn sm ghost" data-a="ics" data-id="${q.id}">В Календарь</button></div></div>`;
+      <div class="row remind"><span class="muted small">Напоминание</span><input type="time" id="rm-${q.id}" data-rm="${q.id}" data-v="${rem}" aria-label="Время напоминания">${rem ? '' : '<span class="muted small">не задано</span>'}<button class="btn sm ghost" data-a="ics" data-id="${q.id}">В Календарь</button></div></div>`;
   }).join('') : '<div class="empty">Пусто. Возьми квест из каталога ниже.</div>'}
     ${active.length > 1 ? '<button class="btn sm ghost" data-a="ics-all" style="align-self:flex-start">Все напоминания в Календарь</button>' : ''}
     <p class="muted small">Календарь айфона сам пришлёт уведомление в нужное время каждый день.</p></section>`;
@@ -1511,6 +1511,8 @@ function render() {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === ui.tab));
   document.getElementById('sheet').innerHTML = viewSheet();
   syncLock();
+  // Значение напоминания ставим после отрисовки: так системная кнопка «Сбросить» очищает поле, а не возвращает старое время
+  document.querySelectorAll('input[data-rm]').forEach(el => { el.value = el.dataset.v || ''; });
   if (ui.tab === 'report') loadPhotos();
   tick();
 }
@@ -1938,7 +1940,13 @@ document.addEventListener('click', async e => {
     case 'reset-ask': confirmAsk('Удалить весь прогресс?', 'Опыт, серия, записи и настройки удалятся без возврата. Сначала лучше сохранить резервную копию.', 'Да, удалить всё', 'reset'); return;
   }
 });
-document.addEventListener('change', e => { const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
+document.addEventListener('change', e => {
+  const rm = e.target.dataset?.rm;
+  if (rm && S) {
+    if (e.target.value) S.settings.remind[rm] = e.target.value; else delete S.settings.remind[rm];
+    save(); render(); toast(e.target.value ? `Напоминание: ${e.target.value}` : 'Напоминание убрано');
+    return;
+  } const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
 document.addEventListener('input', e => {
   const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value);
   const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; }
