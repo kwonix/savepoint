@@ -55,22 +55,32 @@ const rnd = arr => arr[Math.floor(Math.random() * arr.length)];
 
 /* ================= состояние ================= */
 let S = null;
-let ui = { tab: 'today', week: null, sheet: null, guide: null, confirmReset: false, noteDraft: '', journalN: 14 };
+let ui = { tab: 'today', week: null, sheet: null, guide: null, wiz: null, confirmReset: false, noteDraft: '', journalN: 14 };
 
-function fresh(cfg) {
+function fresh(d) {
   const t = todayKey();
   return migrate({
-    v: STATE_VERSION, created: t,
-    settings: { wake: cfg.wake || '09:00', bed: cfg.bed || '01:00', tone: cfg.tone || 'roast', theme: 'auto', remind: {} },
-    boss: { total: cfg.debt || 0, paid: [], weekly: cfg.weekly || 0 },
-    quests: Object.fromEntries((cfg.quests || ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
-    days: {}, side: {}, custom: [], events: [], guide: true, seenVersion: APP_VERSION,
+    v: STATE_VERSION, created: t, profile: { name: (d.name || '').trim() }, profileDone: true,
+    settings: { wake: d.wake || '09:00', bed: d.bed || '01:00', tone: d.tone || 'roast', theme: d.theme || 'auto', remind: {} },
+    bosses: (d.bosses || []).map(b => makeBoss(b, t)),
+    quests: Object.fromEntries((d.quests?.length ? d.quests : ['wake', 'shower']).map(id => [id, { periods: [{ from: t }], auto: null, check: null }])),
+    days: {}, side: {}, sideList: d.side || SIDE_DEFAULT.slice(), custom: d.custom || [], events: [], guide: true,
+    seenVersion: APP_VERSION, lastBackup: t,
+    shop: { rewards: d.rewards || DEFAULT_REWARDS.map(r => ({ ...r })), bought: [] },
   });
 }
 function migrate(s) {
   s.v = STATE_VERSION;
   s.settings ||= {}; s.settings.remind ||= {}; s.settings.theme ||= 'auto';
-  s.boss ||= { total: 0, paid: [], weekly: 0 };
+  s.profile ||= { name: '' };
+  if (!s.bosses) {
+    s.bosses = [];
+    if (s.boss && s.boss.total > 0) s.bosses.push({ id: 'b-legacy', type: 'debt', name: 'Кредитка', stat: 'money', unit: '₽', total: s.boss.total, weekly: s.boss.weekly || 0,
+      hits: (s.boss.paid || []).map(p => ({ day: p.day, amount: p.amount, ts: 0 })), created: s.created, defeated: null });
+  }
+  delete s.boss;
+  if (!s.sideList) s.sideList = [...new Set([...SIDE_DEFAULT, ...Object.keys(s.side || {}).filter(id => SIDE.some(x => x.id === id))])];
+  s.lastBackup ||= s.created;
   s.quests ||= {}; s.days ||= {}; s.side ||= {}; s.custom ||= []; s.events ||= [];
   s.timers ||= {}; s.weeks ||= {}; s.ach ||= {}; s.sprints ||= []; s.fixes ||= {};
   s.shop ||= { rewards: DEFAULT_REWARDS.map(r => ({ ...r })), bought: [] };
@@ -240,7 +250,7 @@ function challengeResult(w) {
 
 /* ================= монеты, опыт ================= */
 const recCoins = r => r.c ?? Math.round(10 * r.v);
-const allSide = () => SIDE.concat(S.custom);
+const allSide = () => SIDE.filter(x => (S.sideList || []).includes(x.id)).concat(S.custom);
 function coins() {
   let earned = 0;
   for (const k in S.days) {
@@ -251,6 +261,7 @@ function coins() {
   for (const s of allSide()) earned += (S.side[s.id] || []).length * Math.round(s.xp / 5);
   for (const w in S.weeks) { const r = challengeResult(w); if (r?.done) earned += 100 + r.wk.stake * 2; }
   earned += Object.keys(S.ach).length * 50;
+  for (const b of S.bosses) earned += bossXpCoins(b).c;
   let spent = S.shop.bought.reduce((s, b) => s + b.price, 0);
   for (const w in S.weeks) spent += S.weeks[w].stake || 0;
   return earned - spent;
@@ -265,7 +276,7 @@ function xpAll() {
     if (d.card?.done) { const c = CARD[d.card.id]; if (c) st[c.stat] += Math.round(RARITY[c.rarity].xp * d.card.done.v); }
   }
   for (const s of allSide()) for (const _ of (S.side[s.id] || [])) st[s.stat] += s.xp;
-  for (const p of S.boss.paid) st.money += Math.floor(p.amount / 100);
+  for (const b of S.bosses) st[b.stat] = (st[b.stat] || 0) + bossXpCoins(b).xp;
   for (const e of S.events) if (e.type === 'auto' && Q[e.id]) st[Q[e.id].stat] += 300;
   for (const w in S.weeks) { const r = challengeResult(w); if (r?.done) st[r.c.stat] += 150; }
   const total = Object.values(st).reduce((a, b) => a + b, 0);
@@ -319,18 +330,18 @@ function weekScore(w) {
   const denom = keys.length - (keys.includes(t) && !anyDone(t) ? 1 : 0);
   const quests = qDays ? qSum / qDays * 60 : (stable ? 60 : 0);
   const stability = denom ? stable / denom * 20 : 20;
-  const paid = S.boss.paid.filter(p => p.day >= w && p.day <= addDays(w, 6)).reduce((s, p) => s + p.amount, 0);
-  const boss = !S.boss.total ? 10 : !S.boss.weekly ? (paid > 0 ? 10 : 0) : Math.min(1, paid / S.boss.weekly) * 10;
+  const boss = bossScore(w);
   const ch = challengeResult(w);
   const rushWhy = [];
   if (allSide().some(s => (S.side[s.id] || []).some(d => d >= w && d <= addDays(w, 6)))) rushWhy.push('сайд-квест');
   if (ch?.done) rushWhy.push('вызов недели');
   if (S.events.some(e => e.type === 'auto' && e.day >= w && e.day <= addDays(w, 6))) rushWhy.push('автопилот');
+  if (S.events.some(e => e.type === 'bosskill' && e.day >= w && e.day <= addDays(w, 6))) rushWhy.push('победа над боссом');
   if (cards >= 5) rushWhy.push('5 карт дня');
   const rush = rushWhy.length ? 10 : 0;
   if (ch) { const wk = ch.wk; marks += wk.marks.length; verified += wk.marks.filter(m => m.proof).length; }
   const total = Math.round(quests + stability + boss + rush);
-  return { total, quests, stability, boss, rush, rushWhy, paid, perQuest, keys, stable, denom, verified, marks, cards,
+  return { total, quests, stability, boss, rush, rushWhy, perQuest, keys, stable, denom, verified, marks, cards,
     flagged: flagged(w), live: addDays(w, 6) >= t };
 }
 const rankOf = s => RANKS.find(([min]) => s >= min)[1];
@@ -346,7 +357,7 @@ function achTests() {
   const si = streakInfo();
   const weeks = []; for (let w = weekOf(S.created); w <= weekOf(t); w = addDays(w, 7)) weeks.push(w);
   const pastScores = weeks.filter(w => addDays(w, 6) < t).map(w => weekScore(w)?.total || 0);
-  const bossPct = S.boss.total ? bossPaid() / S.boss.total : 0;
+  const bossBest = S.bosses.reduce((m, b) => Math.max(m, bossPct(b)), 0);
   const chDone = weeks.map(challengeResult).filter(r => r?.done);
   return {
     first: allRecs.length + cardsDone.length > 0,
@@ -354,7 +365,7 @@ function achTests() {
     wake7: maxRun(S.created, t, k => peekDay(k).q.wake?.v === 1) >= 7,
     streak14: si.best >= 14, streak30: si.best >= 30,
     week60: pastScores.some(s => s >= 60), week80: pastScores.some(s => s >= 80),
-    boss5: bossPct >= .05, boss25: bossPct >= .25,
+    boss5: bossBest >= .05, boss25: bossBest >= .25, bosskill: S.bosses.some(b => b.defeated),
     card10: cardsDone.length >= 10,
     legend: cardsDone.some(c => CARD[c.id]?.rarity === 'l'),
     reroll: cardsDone.some(c => c.rerolled),
@@ -377,8 +388,65 @@ function checkAch() {
 }
 
 /* ================= босс ================= */
-const bossPaid = () => S.boss.paid.reduce((s, p) => s + p.amount, 0);
-const bossLeft = () => Math.max(0, S.boss.total - bossPaid());
+const BT = Object.fromEntries(BOSS_TYPES.map(b => [b.id, b]));
+const activeBosses = () => S.bosses.filter(b => !b.defeated);
+const num = v => { const n = Number(String(v ?? '').replace(',', '.')); return isFinite(n) ? n : 0; };
+const fmtN = (n, unit) => { const r = Math.round(n * 10) / 10; return unit === '₽' ? rub(r) : `${r.toLocaleString('ru-RU')}${unit ? '\u00a0' + unit : ''}`; };
+function makeBoss(d, t) {
+  const T = BT[d.type];
+  return { id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: d.type,
+    name: (d.name || '').trim() || T.defName || T.name, stat: T.pickStat ? (d.stat || 'mind') : T.stat,
+    unit: T.id === 'custom' ? ((d.unit || '').trim() || 'раз') : T.unit,
+    total: num(d.total), weekly: num(d.weekly), start: num(d.start), target: num(d.target), heal: num(d.heal) || 3,
+    hits: [], created: t, defeated: null };
+}
+function bossProblem(d) {
+  const T = BT[d.type];
+  if (T.mode === 'measure') { if (!(num(d.start) > 0) || !(num(d.target) > 0)) return 'Заполни текущее значение и цель'; if (num(d.start) === num(d.target)) return 'Цель совпадает с текущим значением'; return ''; }
+  return num(d.total) > 0 ? '' : 'Укажи цель больше нуля';
+}
+function bossState(b, upto) {
+  const T = BT[b.type], hits = b.hits.filter(h => !upto || h.day <= upto);
+  if (T.mode === 'sum') { const dealt = hits.reduce((s, h) => s + h.amount, 0); return { max: b.total, hp: Math.max(0, b.total - dealt), dealt }; }
+  if (T.mode === 'measure') {
+    const cur = hits.length ? hits[hits.length - 1].value : b.start, dir = b.start >= b.target ? 1 : -1, max = Math.abs(b.start - b.target) || 1;
+    return { max, hp: Math.max(0, (cur - b.target) * dir), cur, dir };
+  }
+  let streak = 0;
+  for (const h of [...hits].sort((a, c) => a.day < c.day ? -1 : 1)) streak = h.clean ? streak + 1 : Math.max(0, streak - (b.heal || 3));
+  return { max: b.total, hp: Math.max(0, b.total - streak), streak };
+}
+const bossPct = b => { const st = bossState(b); return Math.min(1, Math.max(0, 1 - st.hp / st.max)); };
+function bossWeek(b, w) {
+  const T = BT[b.type], end = addDays(w, 6), inW = b.hits.filter(h => h.day >= w && h.day <= end);
+  if (T.mode === 'sum') return inW.reduce((s, h) => s + h.amount, 0);
+  if (T.mode === 'streak') return inW.filter(h => h.clean).length;
+  if (!inW.length) return 0;
+  const before = b.hits.filter(h => h.day < w), base = before.length ? before[before.length - 1].value : b.start;
+  return (base - inW[inW.length - 1].value) * (b.start >= b.target ? 1 : -1);
+}
+function bossXpCoins(b) {
+  const T = BT[b.type]; let xp = 0, c = 0, prev = b.start;
+  for (const h of b.hits) {
+    if (T.mode === 'sum') xp += Math.round(Math.min(300, Math.max(5, h.amount / (b.total || 1) * 1000)));
+    else if (T.mode === 'measure') { const dir = b.start >= b.target ? 1 : -1; xp += 10 + Math.round(Math.min(300, Math.max(0, (prev - h.value) * dir / (Math.abs(b.start - b.target) || 1) * 1000))); prev = h.value; }
+    else xp += h.clean ? 15 : 0;
+    c += T.mode === 'streak' && !h.clean ? 0 : 5;
+  }
+  if (b.defeated) { xp += 500; c += 200; }
+  return { xp, c };
+}
+function bossScore(w) {
+  const end = addDays(w, 6);
+  const list = S.bosses.filter(b => b.created <= end && (!b.defeated || b.defeated >= w));
+  if (!list.length) return 10;
+  return list.reduce((s, b) => { const p = bossWeek(b, w); return s + (b.weekly > 0 ? Math.min(1, Math.max(0, p / b.weekly)) : (p > 0 ? 1 : 0)); }, 0) / list.length * 10;
+}
+function checkBossKill(b, t) {
+  if (!b.defeated && bossState(b).hp <= 0) { b.defeated = t; S.events.push({ day: t, type: 'bosskill', id: b.id }); return true; }
+  if (b.defeated && bossState(b).hp > 0) b.defeated = null;
+  return false;
+}
 
 /* ================= отметки ================= */
 function mark(id, t, rec) {
@@ -451,7 +519,8 @@ const GUIDE = [
       <li><b>Квесты дня.</b> Привычки, которые ты сам выбираешь из каталога. Слотов сначала два, новые открываются с уровнем. Взять всё сразу нельзя специально.</li>
       <li><b>Карта дня.</b> Каждый день случайное задание из колоды. Ты не знаешь, что выпадет. Не нравится — можно перетянуть один раз.</li>
       <li><b>Вызов недели.</b> Одно задание посложнее на всю неделю. На него можно поставить монеты.</li>
-      <li><b>Оценка недели из 100</b> и карточка, которую можно скинуть кентам.</li>
+      <li><b>Оценка недели из 100</b> и карточка, которую можно отправить друзьям.</li>
+      <li><b>Боссы.</b> Большие цели с полоской здоровья: долг, вес, вредная привычка, чтение и другие.</li>
       <li><b>Монеты</b> тратишь в магазине на награды, которые придумаешь сам.</li></ul>` },
   { eyebrow: 'Шаг 2 из 4 · Правила честной игры', title: 'Накликать не получится',
     body: `<ul class="glist warn">
@@ -459,14 +528,14 @@ const GUIDE = [
       <li><b>Одно исправление в неделю.</b> Если реально забыл нажать вчера. Засчитывается вполсилы и без монет.</li>
       <li><b>Фото только с камеры.</b> Для части квестов и карт. Без фото — половина опыта и ноль монет.</li>
       <li><b>Таймеры.</b> Прогулка, чтение, учёба — «Старт» и «Финиш». Раньше времени не засчитается.</li>
-      <li><b>Детектор спринт-кликера.</b> Три отметки меньше чем за минуту — приложение спросит, всё ли честно. Две такие ситуации за неделю — неделя получает ⚠, ачивки замораживаются, а на карточке для кентов это видно.</li>
+      <li><b>Детектор спринт-кликера.</b> Три отметки меньше чем за минуту — приложение спросит, всё ли честно. Две такие ситуации за неделю — неделя получает ⚠, ачивки замораживаются, а на карточке для друзей это видно.</li>
       <li><b>Ачивки нельзя нажать.</b> Они выдаются сами по твоим данным.</li></ul>` },
   { eyebrow: 'Шаг 3 из 4 · Важно знать', title: 'Пара предупреждений',
     body: `<ul class="glist warn">
       <li><b>Данные живут только на этом телефоне.</b> Удалишь иконку или очистишь Safari — пропадёт всё. Раз в неделю сохраняй резервную копию в Профиле.</li>
       <li><b>Сами уведомления приложение не присылает.</b> Напоминания можно добавить в Календарь айфона кнопкой у квеста.</li>
       <li><b>Фото хранятся 2 недели</b> и в резервную копию не попадают.</li>
-      <li><b>Это не врач и не психолог.</b> Спина, зуб и сон — к специалисту. Для этого есть сайд-квесты с большим опытом.</li></ul>` },
+      <li><b>Это не врач и не психолог.</b> Со здоровьем и сном — к специалисту. Для этого есть сайд-квесты с большим опытом.</li></ul>` },
   { eyebrow: 'Шаг 4 из 4 · Про срывы', title: 'Пропуск — это просто день',
     body: `<ul class="glist">
       <li><b>Два щита в неделю.</b> Пропущенный день закрывается щитом без штрафа.</li>
@@ -487,27 +556,94 @@ function viewGuide(step, final) {
 }
 
 /* ================= экраны ================= */
-function viewOnboarding() {
-  if (ui.guide !== null && ui.guide < GUIDE.length) return viewGuide(ui.guide, 'Понял, настраиваем');
-  return `
-  <section class="hero">
-    <svg class="hero-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="var(--accent)"/><path d="M16 44h8V34h8V24h8V16h8" stroke="var(--on-accent)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <h1>Точка сохранения</h1>
-    <p class="muted">Последний шаг: настрой старт. Всё можно поменять потом в Профиле.</p>
-  </section>
-  <form class="card" id="onb">
-    <div class="grid2">
-      <label class="field"><span>Во сколько встаёшь</span><input id="o-wake" type="time" value="09:00" required></label>
-      <label class="field"><span>Во сколько ложишься</span><input id="o-bed" type="time" value="01:00" required></label>
-    </div>
-    <label class="field"><span>Долг по кредитке, ₽ (0, если не нужен босс)</span><input id="o-debt" type="number" inputmode="numeric" min="0" step="1" placeholder="например, 300000"></label>
-    <label class="field"><span>Сколько в неделю вносить на кредитку, ₽</span><input id="o-weekly" type="number" inputmode="numeric" min="0" step="1" placeholder="например, 2000"></label>
-    <div class="field"><span>Тон недельной сводки</span>
-      <div class="seg" id="o-tone"><button type="button" class="on" data-v="roast">С подколом</button><button type="button" data-v="neutral">Нейтральный</button></div></div>
-    <p class="muted small">Первые два квеста: подъём и душ. Остальные выберешь в каталоге, когда откроются слоты.</p>
-    <button class="btn" type="submit">Начать</button>
-  </form>
-  <button class="linkbtn" data-a="open-import" type="button">Восстановить из резервной копии</button>`;
+const WIZ = ['name', 'day', 'quests', 'bosses', 'side', 'rewards', 'style'];
+function newWiz() {
+  return { step: 0, mode: 'new', d: { name: '', wake: '09:00', bed: '01:00', quests: ['wake', 'shower'], bosses: [], keep: [],
+    side: SIDE_DEFAULT.slice(), custom: [], rewards: DEFAULT_REWARDS.map(r => ({ ...r, on: true })), tone: 'roast', theme: 'auto' } };
+}
+function editWiz() {
+  return { step: 0, mode: 'edit', d: { name: S.profile.name || '', wake: S.settings.wake, bed: S.settings.bed,
+    quests: activeQuests().map(q => q.id), bosses: [], keep: activeBosses().map(b => b.id),
+    side: S.sideList.slice(), custom: S.custom.map(c => ({ ...c })), rewards: S.shop.rewards.map(r => ({ ...r, on: true })),
+    tone: S.settings.tone, theme: S.settings.theme || 'auto' } };
+}
+function wizSet(path, v) {
+  const d = ui.wiz?.d; if (!d) return;
+  d[path] = v;
+}
+const wizQuestLimit = () => ui.wiz.mode === 'new' ? 2 : slotsFor(levelOf(xpAll().total).L);
+function wizProblem() {
+  const d = ui.wiz.d, step = WIZ[ui.wiz.step];
+  if (step === 'name' && !d.name.trim()) return 'Напиши, как к тебе обращаться';
+  if (step === 'quests' && !d.quests.length) return 'Выбери хотя бы один квест';
+  if (step === 'bosses') { for (const b of d.bosses) { const e = bossProblem(b); if (e) return `${BT[b.type].name}: ${e.toLowerCase()}`; } }
+  return '';
+}
+function viewWizard() {
+  const w = ui.wiz, d = w.d, step = WIZ[w.step], last = w.step === WIZ.length - 1;
+  const head = (title, sub) => `<div class="dots">${WIZ.map((_, i) => `<i class="${i <= w.step ? 'on' : ''}"></i>`).join('')}</div>
+    <span class="label">${w.mode === 'new' ? 'Анкета' : 'Обнови анкету'} · шаг ${w.step + 1} из ${WIZ.length}</span><h1>${title}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}`;
+  let body = '';
+  if (step === 'name') body = head('Как тебя зовут?', 'Так приложение будет к тебе обращаться. Имя увидят только те, кому ты сам отправишь карточку недели.')
+    + `<input type="text" data-wf="name" id="wz-name" maxlength="24" placeholder="Имя или ник" value="${esc(d.name)}" autocomplete="given-name">`;
+  else if (step === 'day') body = head('Твой режим', 'От этого зависят окна отметок: подъём засчитывается полностью в течение часа от цели, отбой — до цели.')
+    + `<div class="grid2"><label class="field"><span>Во сколько встаёшь</span><input type="time" data-wf="wake" value="${d.wake}"></label>
+       <label class="field"><span>Во сколько ложишься</span><input type="time" data-wf="bed" value="${d.bed}"></label></div>
+       <p class="muted small">День в приложении заканчивается в 04:00. Если лёг в 2 ночи, это засчитается во вчерашний день.</p>`;
+  else if (step === 'quests') {
+    const lim = wizQuestLimit();
+    body = head('С чего начнём', `Выбери до ${lim} ${plural(lim, 'квеста', 'квестов', 'квестов')} на каждый день. Остальные возьмёшь позже, когда откроются слоты. Мало — это специально.`)
+      + Object.entries(STATS).map(([sk, sv]) => `<div class="cat-head" data-stat="${sk}"><span class="chip">${sv.name}</span></div><div class="chips">${CATALOG.filter(q => q.stat === sk && qStatusSafe(q.id) !== 'auto').map(q =>
+        `<button class="pill${d.quests.includes(q.id) ? ' on' : ''}" data-a="wz-q" data-id="${q.id}">${esc(q.title)}${['wake', 'shower'].includes(q.id) && w.mode === 'new' ? ' ★' : ''}</button>`).join('')}</div>`).join('')
+      + `<p class="muted small">Выбрано: <b class="mono">${d.quests.length}/${lim}</b>${w.mode === 'new' ? ' · ★ — советую начать с них: режим тянет за собой всё остальное' : ''}</p>`;
+  } else if (step === 'bosses') {
+    const kept = w.mode === 'edit' ? activeBosses() : [];
+    const total = d.keep.length + d.bosses.length;
+    body = head('Боссы', 'Большие цели с полоской здоровья. Необязательно, можно пропустить и добавить позже во вкладке «Квесты».')
+      + (kept.length ? `<div class="label">Уже есть</div>${kept.map(b => `<div class="side"><div style="min-width:0"><div class="side-title">${esc(b.name)}</div><span class="muted small">${esc(BT[b.type].name)} · ${Math.round(bossPct(b) * 100)}%</span></div>
+          <button class="pill${d.keep.includes(b.id) ? ' on' : ''}" data-a="wz-keep" data-id="${b.id}">${d.keep.includes(b.id) ? 'Оставить' : 'Убрать'}</button></div>`).join('')}` : '')
+      + d.bosses.map((b, i) => `<div class="card wb"><div class="section-head"><b>${esc(BT[b.type].name)}</b><button class="linkbtn" data-a="wz-bdel" data-i="${i}">убрать</button></div>${bossForm(b, 'wbk', i)}</div>`).join('')
+      + (total < BOSS_LIMIT ? `<div class="label">Добавить${total ? ' ещё' : ''} · максимум ${BOSS_LIMIT}</div><div class="btypes">${BOSS_TYPES.map(T => `<button class="btype" data-stat="${T.stat}" data-a="wz-badd" data-t="${T.id}"><b>${esc(T.name)}</b><span class="muted small">${esc(T.desc)}</span></button>`).join('')}</div>` : `<p class="muted small">Это максимум: ${BOSS_LIMIT} босса одновременно.</p>`);
+  } else if (step === 'side') {
+    body = head('Разовые дела', 'То, что давно откладываешь. Каждое дело делается один раз и даёт много опыта. Отметь нужные и добавь свои.')
+      + `<div class="chips">${SIDE.map(sq => `<button class="pill${d.side.includes(sq.id) ? ' on' : ''}" data-a="wz-side" data-id="${sq.id}">${esc(sq.title)}</button>`).join('')}</div>`
+      + (d.custom.length ? `<div class="label">Свои</div>${d.custom.map((c, i) => `<div class="side"><div class="side-title">${esc(c.title)}</div><button class="linkbtn" data-a="wz-cdel" data-i="${i}">убрать</button></div>`).join('')}` : '')
+      + `<div class="row"><input type="text" class="grow" id="wz-ctitle" maxlength="80" placeholder="Своё дело, например: продлить паспорт"><button class="btn sm" data-a="wz-cadd">Добавить</button></div>`;
+  } else if (step === 'rewards') {
+    body = head('Награды', 'За квесты капают монеты. Здесь решаешь, на что их тратить. Отдых по плану — часть игры, а не срыв.')
+      + d.rewards.map((r, i) => `<div class="side"><div style="min-width:0"><div class="side-title">${esc(r.title)}</div><span class="muted small mono">${r.price} монет</span></div>
+         <button class="pill${r.on ? ' on' : ''}" data-a="wz-rw" data-i="${i}">${r.on ? 'Беру' : 'Не надо'}</button></div>`).join('')
+      + `<div class="grid2"><input type="text" id="wz-rtitle" maxlength="60" placeholder="Своя награда"><input type="number" id="wz-rprice" min="10" step="10" placeholder="Цена в монетах"></div>
+         <button class="btn sm ghost" data-a="wz-radd" style="align-self:flex-start">Добавить награду</button>
+         <p class="muted small">Ориентир: за обычный день набирается 30–60 монет.</p>`;
+  } else {
+    body = head('Последнее', 'Как с тобой разговаривать и как выглядеть.')
+      + `<div class="field"><span>Тон недельной сводки</span><div class="seg"><button class="${d.tone === 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="roast">С подколом</button><button class="${d.tone !== 'roast' ? 'on' : ''}" data-a="wz-tone" data-v="neutral">Нейтральный</button></div></div>
+         <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${d.theme === v ? 'on' : ''}" data-a="wz-theme" data-v="${v}">${n}</button>`).join('')}</div></div>
+         <ul class="glist"><li><b>Напоминания</b> поставишь во вкладке «Квесты»: время у квеста → «В Календарь».</li>
+         <li><b>Резервная копия.</b> Раз в неделю приложение напомнит её сохранить.</li>
+         <li><b>Всё это можно поменять</b> потом: Профиль → «Изменить анкету».</li></ul>`;
+  }
+  return `<section class="guide wiz">${body}
+    <div class="row wiz-nav">${w.step > 0 ? '<button class="btn ghost" data-a="wz-back">Назад</button>' : (w.mode === 'edit' ? '<button class="btn ghost" data-a="wz-cancel">Отмена</button>' : '')}
+      <button class="btn grow" data-a="wz-next">${last ? (w.mode === 'new' ? 'Начать игру' : 'Сохранить') : step === 'bosses' && !d.bosses.length && !d.keep.length ? 'Пропустить' : 'Дальше'}</button></div>
+    ${w.mode === 'new' && w.step === 0 ? '<button class="linkbtn" data-a="open-import">Восстановить из резервной копии</button>' : ''}
+  </section>`;
+}
+const qStatusSafe = id => S ? qStatus(id) : 'off';
+function wizApply() {
+  const d = ui.wiz.d, t = todayKey();
+  const rewards = d.rewards.filter(r => r.on).map(({ on, ...r }) => r);
+  if (ui.wiz.mode === 'new') {
+    S = fresh({ ...d, rewards }); evolve(); save(); ui.wiz = null; ui.tab = 'today'; window.scrollTo(0, 0); render();
+    toast(`${d.name.trim()}, сохранение создано. Первые квесты ждут`, true); return;
+  }
+  S.profile.name = d.name.trim(); Object.assign(S.settings, { wake: d.wake, bed: d.bed, tone: d.tone, theme: d.theme });
+  for (const q of activeQuests()) if (!d.quests.includes(q.id)) deactivate(q.id, t);
+  for (const id of d.quests) if (qStatus(id) === 'off') activate(id, t);
+  S.bosses = S.bosses.filter(b => b.defeated || d.keep.includes(b.id)).concat(d.bosses.map(b => makeBoss(b, t)));
+  S.sideList = d.side.slice(); S.custom = d.custom; S.shop.rewards = rewards; S.profileDone = true;
+  ui.wiz = null; save(); window.scrollTo(0, 0); render(); toast('Анкета сохранена', true);
 }
 
 function viewHeader() {
@@ -520,7 +656,7 @@ function viewHeader() {
     <div class="top-row">
       <div style="min-width:0">
         <div class="date-line">${fmtDayLong(t)}</div>
-        <h1>${greet()}</h1>
+        <h1>${greet()}${S.profile.name ? `, ${esc(S.profile.name)}` : ''}</h1>
       </div>
       <div class="lvl" aria-label="Уровень ${lv.L}"><small>ур.</small><b>${lv.L}</b></div>
     </div>
@@ -648,6 +784,8 @@ function viewToday() {
       <span class="label">Итоги прошлой недели готовы</span>
       <div class="row" style="justify-content:space-between"><span class="rank">${sc.total}/100 · ${rankOf(sc.total)}${sc.flagged ? ' ⚠' : ''}</span><span class="muted">Открыть</span></div></button>`;
   }
+  if (daysBetween(S.lastBackup || S.created, t) >= 7) html += `<section class="card hl"><span class="label">Раз в неделю</span><h2>Сохрани резервную копию</h2>
+    <p class="muted small">Данные живут только на этом телефоне. Копия займёт 10 секунд.</p><div class="row"><button class="btn sm" data-a="export">Сохранить копию</button><button class="linkbtn" data-a="backup-later">Напомни завтра</button></div></section>`;
   const lastCh = challengeResult(prevW);
   if (lastCh && lastCh.lost && !S.weeks[prevW].seenLoss) html += `<section class="card warnc"><span class="label">Ставка сгорела</span><p>Вызов «${esc(lastCh.c.title)}» не добит: ${lastCh.wk.marks.length}/${lastCh.c.n}. Минус ${lastCh.wk.stake} монет.</p><button class="linkbtn" data-a="seen-loss" data-w="${prevW}" style="align-self:flex-start">Понял</button></section>`;
 
@@ -683,7 +821,7 @@ function viewToday() {
     ? `<section class="card"><span class="label">Ночь на ${fmtDay(addDays(nk, 1))}</span><p>Записано: не ложился. ${esc((ns.tags || []).join(', '))}${ns.text ? ` — «${esc(ns.text)}»` : ''}</p><button class="linkbtn" data-a="nosleep-undo" style="align-self:flex-start">Убрать запись</button></section>`
     : `<button class="btn ghost" data-a="nosleep-sheet">Не ложился спать</button>`;
 
-  if (S.boss.total) html += bossCard(true);
+  html += activeBosses().map(b => bossCard(b, false)).join('');
 
   const next = allSide().find(s => !s.repeat && !(S.side[s.id] || []).length);
   if (next) html += `<section class="card"><span class="label">Сайд-квест · один раз</span>
@@ -692,17 +830,63 @@ function viewToday() {
   return html;
 }
 
-function bossCard(compact) {
-  const left = bossLeft(), pct = S.boss.total ? left / S.boss.total * 100 : 0;
-  const w = weekOf(todayKey());
-  const paidW = S.boss.paid.filter(p => p.day >= w).reduce((s, p) => s + p.amount, 0);
-  return `<section class="card boss">
-    <div class="boss-top"><span class="boss-name">Босс: Кредитка</span><span class="mono small">${rub(left)}</span></div>
-    <div class="hp" role="img" aria-label="Осталось ${Math.round(pct)}%"><i style="width:${pct.toFixed(1)}%"></i></div>
-    <div class="hp-meta"><span>Урон за неделю: ${rub(paidW)}${S.boss.weekly ? ' из ' + rub(S.boss.weekly) : ''}</span><span>${(100 - pct).toFixed(1)}% побеждено</span></div>
-    <div class="row"><input class="grow" id="pay" type="number" inputmode="numeric" min="1" step="1" placeholder="Внёс на кредитку, ₽"><button class="btn sm" data-a="pay">Нанести урон</button></div>
-    ${compact ? '' : (S.boss.paid.length ? `<div class="muted small">Последние: ${S.boss.paid.slice(-4).reverse().map(p => `${fmtDay(p.day)} — ${rub(p.amount)}`).join(' · ')} <button class="linkbtn" data-a="undo-pay">отменить последний</button></div>` : '')}
+function bossCard(b, full) {
+  const T = BT[b.type], st = bossState(b), t = todayKey();
+  const hpPct = Math.min(100, st.hp / st.max * 100), wk = bossWeek(b, weekOf(t));
+  const todayHit = b.hits.find(h => h.day === t);
+  let info = '', week = '', controls = '';
+  if (b.defeated) {
+    return `<section class="card boss won" data-stat="${b.stat}"><div class="boss-top"><span class="boss-name">${esc(b.name)}</span><span class="badge gold">Побеждён · ${fmtDay(b.defeated)}</span></div>
+      <span class="muted small">${esc(T.name)} · +500 опыта, +200 монет</span>${full ? `<button class="linkbtn" data-a="boss-undo" data-id="${b.id}" style="align-self:flex-start">отменить последний удар</button>` : ''}</section>`;
+  }
+  if (T.mode === 'sum') {
+    info = `${fmtN(st.dealt, b.unit)} из ${fmtN(b.total, b.unit)}`;
+    week = `За неделю: ${fmtN(wk, b.unit)}${b.weekly ? ' из ' + fmtN(b.weekly, b.unit) : ''}`;
+    controls = `<div class="row"><input class="grow" id="bh-${b.id}" type="number" inputmode="decimal" min="0" step="${T.step || 1}" placeholder="${esc(T.hitLabel)}" aria-label="${esc(T.hitLabel)}"><button class="btn sm" data-a="boss-hit" data-id="${b.id}">${esc(T.hitBtn)}</button></div>`;
+  } else if (T.mode === 'measure') {
+    info = `Сейчас ${fmtN(st.cur, b.unit)} → цель ${fmtN(b.target, b.unit)}`;
+    week = wk > 0 ? `За неделю ближе к цели на ${fmtN(wk, b.unit)}${b.weekly ? ` из ${fmtN(b.weekly, b.unit)}` : ''}` : wk < 0 ? `За неделю откат на ${fmtN(-wk, b.unit)}` : `За неделю без изменений${b.weekly ? ` · цель ${fmtN(b.weekly, b.unit)}` : ''}`;
+    controls = `<div class="row"><input class="grow" id="bh-${b.id}" type="number" inputmode="decimal" min="0" step="${T.step || 1}" placeholder="${esc(T.hitLabel)}" aria-label="${esc(T.hitLabel)}"><button class="btn sm" data-a="boss-hit" data-id="${b.id}">${todayHit ? 'Обновить' : esc(T.hitBtn)}</button></div>${todayHit ? `<span class="muted small">Сегодня записано: ${fmtN(todayHit.value, b.unit)}</span>` : ''}`;
+  } else {
+    info = `Чистых дней: ${st.streak} из ${b.total}`;
+    week = `На этой неделе: ${wk} из ${b.weekly || 7}`;
+    controls = todayHit
+      ? `<div class="row"><span class="badge ${todayHit.clean ? 'gold' : ''}">${todayHit.clean ? 'Сегодня чистый день' : `Срыв: босс вылечился на ${b.heal} дн.`}</span><button class="linkbtn" data-a="boss-undo" data-id="${b.id}">отменить</button></div>`
+      : `<div class="row"><button class="btn sm" data-a="boss-clean" data-id="${b.id}" data-v="1">Чистый день</button><button class="btn sm ghost" data-a="boss-clean" data-id="${b.id}" data-v="0">Сорвался</button></div>
+         <span class="muted small">Отмечай вечером. Срыв без штрафа к опыту, но босс лечится.</span>`;
+  }
+  const hist = full && b.hits.length ? `<div class="muted small">Последние: ${b.hits.slice(-4).reverse().map(h => `${fmtDay(h.day)} — ${T.mode === 'sum' ? fmtN(h.amount, b.unit) : T.mode === 'measure' ? fmtN(h.value, b.unit) : h.clean ? 'чисто' : 'срыв'}`).join(' · ')}
+    ${T.mode !== 'streak' ? `<button class="linkbtn" data-a="boss-undo" data-id="${b.id}">отменить последний</button>` : ''}</div>` : '';
+  const del = full ? (ui.bossDel === b.id
+    ? `<div class="row"><span class="small">Удалить босса вместе с историей?</span><button class="btn sm danger" data-a="boss-del-yes" data-id="${b.id}">Удалить</button><button class="linkbtn" data-a="boss-del-no">Нет</button></div>`
+    : `<button class="linkbtn" data-a="boss-del" data-id="${b.id}" style="align-self:flex-start">удалить босса</button>`) : '';
+  return `<section class="card boss" data-stat="${b.stat}">
+    <div class="boss-top"><span class="boss-name">${esc(b.name)}</span><span class="chip">${esc(T.name)}</span></div>
+    <div class="hp" role="img" aria-label="Здоровье босса ${Math.round(hpPct)}%"><i style="width:${hpPct.toFixed(1)}%"></i></div>
+    <div class="hp-meta"><span>${info}</span><span class="mono">${Math.round(bossPct(b) * 100)}%</span></div>
+    <span class="muted small">${week}</span>
+    ${controls}${hist}${del}
   </section>`;
+}
+
+function bossForm(d, prefix, idx) {
+  // поля для создания босса: в анкете и в листе «Новый босс»
+  const T = BT[d.type];
+  return `<div class="bform" data-stat="${T.stat}"${idx !== undefined ? ` data-bi="${idx}"` : ''}>
+    <label class="field"><span>Название босса</span><input type="text" maxlength="40" data-${prefix}="name" value="${esc(d.name ?? T.defName)}" placeholder="${esc(T.defName || 'Например: Курсовая')}"></label>
+    ${T.pickStat ? `<label class="field"><span>Характеристика</span><select data-${prefix}="stat">${Object.entries(STATS).map(([k, v]) => `<option value="${k}" ${(d.stat || 'mind') === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>` : ''}
+    <div class="grid2">${T.fields.map(f => `<label class="field"><span>${esc(f.label)}</span><input ${f.text ? 'type="text" maxlength="12"' : `type="number" inputmode="decimal" min="0" step="${f.step || 1}"`} data-${prefix}="${f.k}" value="${esc(d[f.k] ?? '')}" placeholder="${esc(f.ph)}"></label>`).join('')}</div>
+  </div>`;
+}
+
+function viewBosses() {
+  const act = activeBosses(), won = S.bosses.filter(b => b.defeated);
+  let html = `<section class="section"><div class="section-head"><h2>Боссы</h2><span class="muted small mono">${act.length}/${BOSS_LIMIT}</span></div>
+    <p class="muted small">Большие цели с полоской здоровья. У каждого типа свой способ наносить урон.</p>`;
+  html += act.map(b => bossCard(b, true)).join('') || '<div class="empty">Боссов нет. Добавь первого: долг, вес, вредная привычка, чтение — что угодно большое.</div>';
+  if (act.length < BOSS_LIMIT) html += `<button class="btn ghost" data-a="boss-new">Новый босс</button>`;
+  if (won.length) html += `<div class="label">Трофеи</div>` + won.map(b => bossCard(b, true)).join('');
+  return html + '</section>';
 }
 
 function viewQuests() {
@@ -726,6 +910,8 @@ function viewQuests() {
     const q = Q[ui.confirmDrop];
     html += `<section class="card warnc"><p>Убрать «${esc(q.title)}»? Прогресс до автопилота начнётся заново, если вернёшь.</p><div class="row"><button class="btn sm danger" data-a="q-drop-yes">Убрать</button><button class="btn sm ghost" data-a="q-drop-no">Оставить</button></div></section>`;
   }
+
+  html += viewBosses();
 
   const auto = CATALOG.filter(q => qStatus(q.id) === 'auto');
   if (auto.length) html += `<section class="card"><h2>На автопилоте</h2>${auto.map(q => `<div class="side"><div class="side-title">${esc(q.title)}</div><span class="badge gold">★</span></div>`).join('')}</section>`;
@@ -752,6 +938,8 @@ function viewQuests() {
       <span class="muted small">${STATS[s.stat].name}${s.repeat ? ' · раз в неделю' : ''}${done && !s.repeat ? ' · ' + fmtDay(ds[ds.length - 1]) : ''}</span></div>
       ${done ? `<button class="linkbtn" data-a="side-undo" data-id="${s.id}">отменить</button>` : `<button class="btn sm" data-a="side" data-id="${s.id}">+${s.xp}</button>`}</div>`;
   }
+  const rest = SIDE.filter(x => !(S.sideList || []).includes(x.id));
+  if (rest.length) html += `</div><details><summary class="muted">Добавить из списка</summary><div class="chips stack">${rest.map(x => `<button class="pill" data-a="side-add" data-id="${x.id}">+ ${esc(x.title)}</button>`).join('')}</div></details><div>`;
   html += `</div><details><summary class="muted">Добавить свой сайд-квест</summary>
       <div class="stack">
         <input type="text" id="c-title" placeholder="Например: разобрать завал на столе" maxlength="80">
@@ -785,7 +973,7 @@ function viewWeek() {
     <div class="parts">
       ${part('Квесты', sc.quests, 60)}${part('Стабильность', sc.stability, 20)}${part('Босс', sc.boss, 10)}${part(`Рывок${sc.rushWhy.length ? ': ' + sc.rushWhy.join(', ') : ': сайд-квест, вызов, 5 карт или автопилот'}`, sc.rush, 10)}
     </div>
-    <button class="btn" data-a="share" data-w="${w}">Поделиться с кентами</button>
+    <button class="btn" data-a="share" data-w="${w}">Поделиться с друзьями</button>
   </section>`;
 
   const { shieldDays } = streakInfo();
@@ -821,12 +1009,12 @@ function summaryLines(w, sc) {
   const roast = S.settings.tone === 'roast', seed = isoWeekNo(w), out = [];
   const pick = arr => arr[seed % arr.length];
   const T = {
-    shower: [['Соседи по блоку начинают открывать окно, когда ты заходишь.', 'Шампунь в шкафу ждёт тебя, как бабушка звонка.'], ['Уже не вонючка, но ещё не свежесть.'], ['Официально: не вонючка.', 'Свежесть уровня рекламы геля.']],
+    shower: [['Шампунь в шкафу начинает обижаться.', 'Мыло ждёт тебя, как звонка от старого друга.'], ['Уже свежо, но ещё не стабильно.'], ['Свежесть уровня рекламы геля.', 'Чистота — твоё второе имя.']],
     wake: [['Будильник подаёт в суд за игнор.'], ['Режим собирается, как пазл без половины деталей.'], ['Будильник впервые чувствует уважение.']],
     walk: [['Ноги подозревают, что их держат для красоты.'], ['Улица тебя уже узнаёт.'], ['Голуби здороваются первыми.']],
-    bed: [['Дискорд снова победил.'], ['Ночь пока делится с дискордом пополам.'], ['Кенты заметили, что ты уходишь первым.']],
+    bed: [['Ночь снова победила.'], ['Ночь пока делится с тобой пополам.'], ['Друзья заметили, что ты уходишь спать первым.']],
     food: [['Курьеры знают тебя по имени.'], ['Кухня видела тебя чаще обычного.'], ['Приложение доставки пишет «мы скучаем».']],
-    smoke: [['Лифт с 13-го этажа устал возить тебя курить.'], ['Лёгкие осторожно надеются.'], ['Лёгкие пишут благодарность.']],
+    smoke: [['Вредная привычка чувствует себя как дома.'], ['Организм осторожно надеется.'], ['Организм пишет благодарность.']],
     read: [['Книга начала покрываться пылью из обиды.'], ['Закладка двигается. Медленно, но двигается.'], ['Ещё немного, и начнёшь цитировать.']],
   };
   for (const q of CATALOG) {
@@ -840,10 +1028,12 @@ function summaryLines(w, sc) {
   if (sc.cards) out.push(`Карт дня выполнено: ${sc.cards}.`);
   const ch = challengeResult(w);
   if (ch) out.push(`Вызов «${ch.c.title}»: ${ch.wk.marks.length}/${ch.c.n}${ch.done ? ', выполнен' : ch.over ? ', не добит' : ''}${ch.wk.stake ? `, ставка ${ch.wk.stake}` : ''}.`);
-  if (S.boss.total) {
-    const left = bossLeft();
-    out.push(sc.paid > 0 ? (roast ? `Урон по кредитке: ${rub(sc.paid)}. Босс шатается, осталось ${rub(left)}.` : `По кредитке внесено ${rub(sc.paid)}, осталось ${rub(left)}.`)
-      : (roast ? 'По кредитке ноль урона. Босс отдыхает и копит проценты.' : 'По кредитке на этой неделе ничего не внесено.'));
+  for (const b of S.bosses.filter(b => b.created <= addDays(w, 6) && (!b.defeated || b.defeated >= w))) {
+    const T = BT[b.type], p = bossWeek(b, w), st = bossState(b);
+    if (b.defeated && b.defeated <= addDays(w, 6)) { out.push(`${b.name}: побеждён ${fmtDay(b.defeated)}.${roast ? ' Легенда.' : ''}`); continue; }
+    if (T.mode === 'sum') out.push(p > 0 ? `${b.name}: урон за неделю ${fmtN(p, b.unit)}, осталось ${fmtN(st.hp, b.unit)}.${roast ? ' Босс шатается.' : ''}` : `${b.name}: на этой неделе без урона.${roast ? ' Босс отдыхает и набирается сил.' : ''}`);
+    else if (T.mode === 'measure') out.push(`${b.name}: ${p > 0 ? 'сдвиг к цели на ' + fmtN(p, b.unit) : p < 0 ? 'откат на ' + fmtN(-p, b.unit) : 'без изменений'}, сейчас ${fmtN(st.cur, b.unit)}.`);
+    else out.push(`${b.name}: чистых дней ${p} из 7.${roast && p >= 6 ? ' Босс в панике.' : roast && p <= 2 ? ' Босс доволен собой.' : ''}`);
   }
   const ns = sc.keys.filter(k => peekDay(k).nosleep).length;
   if (ns) out.push(`Ночей без сна: ${ns}.${roast ? ' Утро после них считается за два.' : ''}`);
@@ -898,6 +1088,12 @@ function viewReport() {
     }).join('')}</div><p class="muted small">Сегодняшний день не считается, пока не закончился.</p></section>`;
   }
 
+  // боссы
+  if (S.bosses.length) html += `<section class="card"><h2>Боссы</h2><div class="parts">${S.bosses.map(b => {
+    const p = Math.round(bossPct(b) * 100);
+    return `<div class="part" data-stat="${b.stat}"><span>${esc(b.name)}${b.defeated ? ' · побеждён ' + fmtDay(b.defeated) : ''}</span><span class="mono">${p}%</span><div class="bar stat-bar"><i style="width:${p}%"></i></div></div>`;
+  }).join('')}</div></section>`;
+
   // причины
   const skip = {}, ns = {};
   for (const k of allKeys) { for (const tg of (peekDay(k).tags || [])) skip[tg] = (skip[tg] || 0) + 1; for (const tg of (peekDay(k).nosleep?.tags || [])) ns[tg] = (ns[tg] || 0) + 1; }
@@ -951,7 +1147,7 @@ function csv() {
 
 function viewMe() {
   const x = xpAll(), lv = levelOf(x.total), bal = coins();
-  let html = `<header class="top"><span class="label">Профиль</span><h1>Уровень ${lv.L}</h1><p class="muted">Опыт: <span class="mono">${x.total}</span> · монеты: <span class="mono">${bal}</span> · играешь с ${fmtDay(S.created)}</p></header>`;
+  let html = `<header class="top"><span class="label">${esc(S.profile.name || 'Профиль')}</span><h1>Уровень ${lv.L}</h1><p class="muted">Опыт: <span class="mono">${x.total}</span> · монеты: <span class="mono">${bal}</span> · играешь с ${fmtDay(S.created)}</p></header>`;
   html += `<section class="stats">${Object.entries(STATS).map(([k, v]) => {
     const l = levelOf(x.st[k], 40);
     return `<div class="stat" data-stat="${k}"><div class="stat-top"><span class="stat-name">${v.name}</span><span class="stat-lvl">${l.L}</span></div>
@@ -970,19 +1166,16 @@ function viewMe() {
     ${S.shop.bought.length ? `<div class="label">Куплено</div>${S.shop.bought.slice(-5).reverse().map(b => `<div class="kv"><span>${esc(b.title)} · ${fmtDay(b.day)}</span><span class="mono">−${b.price}</span></div>`).join('')}` : ''}
   </section>`;
 
-  if (S.boss.total) html += bossCard(false);
-
   const st = S.settings;
   html += `<section class="card"><h2>Настройки</h2>
     <div class="grid2"><label class="field"><span>Подъём</span><input id="s-wake" type="time" value="${st.wake}"></label>
     <label class="field"><span>Отбой</span><input id="s-bed" type="time" value="${st.bed}"></label></div>
-    <div class="grid2"><label class="field"><span>Долг всего, ₽</span><input id="s-debt" type="number" inputmode="numeric" min="0" step="1" value="${S.boss.total || ''}"></label>
-    <label class="field"><span>Цель в неделю, ₽</span><input id="s-weekly" type="number" inputmode="numeric" min="0" step="1" value="${S.boss.weekly || ''}"></label></div>
     <div class="field"><span>Тон сводки</span><div class="seg"><button class="${st.tone === 'roast' ? 'on' : ''}" data-a="tone" data-v="roast">С подколом</button><button class="${st.tone !== 'roast' ? 'on' : ''}" data-a="tone" data-v="neutral">Нейтральный</button></div></div>
     <div class="field"><span>Тема</span><div class="seg seg3">${[['auto', 'Авто'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, n]) => `<button class="${(st.theme || 'auto') === v ? 'on' : ''}" data-a="theme" data-v="${v}">${n}</button>`).join('')}</div></div>
     <button class="btn sm" data-a="save-settings">Сохранить настройки</button>
     <p class="muted small">День заканчивается в 04:00: если лёг в 2 ночи, отбой засчитается во вчерашний день.</p></section>`;
 
+  html += `<section class="card"><h2>Анкета</h2><p class="muted small">Имя, режим, квесты, боссы, разовые дела и награды.</p><button class="btn sm ghost" data-a="wiz-open" style="align-self:flex-start">Изменить анкету</button></section>`;
   html += `<section class="card"><h2>Как это работает</h2><p class="muted small">Правила, окна отметок и защита от накрутки.</p><button class="btn sm ghost" data-a="guide-open" style="align-self:flex-start">Открыть гайд</button></section>`;
   html += `<section class="card"><h2>Резервная копия</h2>
     <p class="muted small">Все данные лежат только на телефоне. Удалишь иконку — пропадут. Раз в неделю сохраняй копию: отправь себе в «Избранное» или в заметки. Фото в копию не входят.</p>
@@ -1002,7 +1195,7 @@ function viewSheet() {
   const sh = ui.sheet; if (!sh) return '';
   const t = todayKey();
   if (sh.type === 'share') return sheetWrap('Карточка недели', `<h2>Карточка недели</h2>${sh.url ? `<img class="share-img" src="${sh.url}" alt="Карточка недели">` : '<div class="empty">Рисую…</div>'}
-    <p class="muted small">${sh.canShare ? 'Отправь кентам через меню «Поделиться».' : 'Зажми картинку и выбери «Сохранить» или «Поделиться».'}</p>
+    <p class="muted small">${sh.canShare ? 'Отправь друзьям через меню «Поделиться».' : 'Зажми картинку и выбери «Сохранить» или «Поделиться».'}</p>
     <div class="row">${sh.canShare ? '<button class="btn grow" data-a="share-send">Поделиться</button>' : ''}<button class="btn ghost grow" data-a="share-copy">Скопировать текстом</button></div>
     <button class="btn ghost" data-a="close-sheet">Закрыть</button>`);
   if (sh.type === 'import') return sheetWrap('Восстановление', `<h2>Восстановить из копии</h2><p class="muted small">Выбери файл копии или вставь её текст. Текущие данные заменятся.</p>
@@ -1036,6 +1229,14 @@ function viewSheet() {
     <div class="chips">${NOSLEEP_TAGS.map(tg => `<button class="pill${sel.includes(tg) ? ' on' : ''}" data-a="ns-tag" data-t="${esc(tg)}">${esc(tg)}</button>`).join('')}</div>
     <input type="text" id="ns-text" placeholder="Что было? Одна строка" maxlength="160" value="${esc(sh.text || '')}">
     <button class="btn" data-a="nosleep-save">Записать</button><button class="linkbtn" data-a="close-sheet">Отмена</button>`); }
+  if (sh.type === 'boss') {
+    if (!sh.d) return sheetWrap('Новый босс', `<h2>Новый босс</h2><p class="muted small">Выбери тип. У каждого свой способ наносить урон.</p>
+      <div class="btypes">${BOSS_TYPES.map(T => `<button class="btype" data-stat="${T.stat}" data-a="boss-pick" data-t="${T.id}"><b>${esc(T.name)}</b><span class="muted small">${esc(T.desc)}</span></button>`).join('')}</div>
+      <button class="linkbtn" data-a="close-sheet">Отмена</button>`);
+    return sheetWrap('Новый босс', `<span class="label">Новый босс · ${esc(BT[sh.d.type].name)}</span><h2>${esc(BT[sh.d.type].desc)}</h2>
+      ${bossForm(sh.d, 'bf')}
+      <button class="btn" data-a="boss-save">Создать босса</button><button class="linkbtn" data-a="boss-new">Другой тип</button>`);
+  }
   if (sh.type === 'whatsnew') {
     const from = sh.from || '0';
     const items = CHANGELOG.filter(c => cmpVer(c.v, from) > 0);
@@ -1048,7 +1249,7 @@ function viewSheet() {
   }
   if (sh.type === 'sprint') return sheetWrap('Детектор', `<span class="label">Детектор спринт-кликера</span><h2>Три отметки меньше чем за минуту</h2>
     <p>Всё по-честному? Бывает, что закрываешь вечер разом. Но если накликал — лучше снять сейчас.</p>
-    <p class="muted small">Если неделя наберёт ${SPRINT_FLAG} таких «по-честному», она получит ⚠: ачивки заморозятся, а на карточке для кентов будет видно.</p>
+    <p class="muted small">Если неделя наберёт ${SPRINT_FLAG} таких «по-честному», она получит ⚠: ачивки заморозятся, а на карточке для друзей будет видно.</p>
     <button class="btn" data-a="sprint-keep">Да, всё сделал</button><button class="btn ghost" data-a="sprint-undo">Накликал, сними эти отметки</button>`);
   if (sh.type === 'ics') return sheetWrap('Календарь', `<h2>Напоминание в Календарь</h2>
     <p class="muted small">Должен открыться файл календаря: нажми «Добавить все». Если ничего не произошло — нажми «Отправить файлом» и выбери «Календарь», либо создай напоминание вручную: Напоминания → Новое → Повтор: ежедневно.</p>
@@ -1060,8 +1261,9 @@ function render() {
   applyTheme();
   const root = document.getElementById('app');
   const tabbar = document.getElementById('tabbar');
-  if (!S) { root.innerHTML = viewOnboarding(); tabbar.hidden = true; bindOnboarding(); document.getElementById('sheet').innerHTML = viewSheet(); return; }
-  if (ui.guide !== null) { root.innerHTML = viewGuide(ui.guide, 'Понял'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = ''; return; }
+  if (ui.guide !== null && ui.guide < GUIDE.length) { root.innerHTML = viewGuide(ui.guide, S ? 'Понял' : 'Понял, к анкете'); tabbar.hidden = true; document.getElementById('sheet').innerHTML = S ? '' : viewSheet(); return; }
+  if (!S && !ui.wiz) ui.wiz = newWiz();
+  if (ui.wiz) { root.innerHTML = viewWizard(); tabbar.hidden = true; document.getElementById('sheet').innerHTML = viewSheet(); return; }
   tabbar.hidden = false;
   root.innerHTML = ui.tab === 'quests' ? viewQuests() : ui.tab === 'week' ? viewWeek() : ui.tab === 'report' ? viewReport() : ui.tab === 'me' ? viewMe() : viewToday();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === ui.tab));
@@ -1070,7 +1272,7 @@ function render() {
   tick();
 }
 function applyTheme() {
-  const th = S?.settings?.theme;
+  const th = ui.wiz ? ui.wiz.d.theme : S?.settings?.theme;
   if (th === 'dark' || th === 'light') document.documentElement.setAttribute('data-theme', th);
   else document.documentElement.removeAttribute('data-theme');
 }
@@ -1085,19 +1287,9 @@ function tick() {
 }
 setInterval(tick, 1000);
 
-/* ================= онбординг ================= */
-function bindOnboarding() {
-  const seg = document.getElementById('o-tone'); if (!seg) return;
-  seg.onclick = e => { const b = e.target.closest('button'); if (!b) return; seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); };
-  document.getElementById('onb').onsubmit = e => {
-    e.preventDefault();
-    S = fresh({ wake: val('o-wake'), bed: val('o-bed'), debt: Math.max(0, Math.round(Number(val('o-debt')) || 0)), weekly: Math.max(0, Math.round(Number(val('o-weekly')) || 0)), tone: seg.querySelector('.on')?.dataset.v || 'roast' });
-    evolve(); save(); ui.tab = 'today'; ui.guide = null; window.scrollTo(0, 0); render(); toast('Сохранение создано. Первые квесты ждут', true);
-  };
-}
 const val = id => document.getElementById(id)?.value ?? '';
 
-/* ================= карточка для кентов ================= */
+/* ================= карточка для друзей ================= */
 async function drawShare(w) {
   const sc = weekScore(w), si = streakInfo(), lv = levelOf(xpAll().total).L;
   const prev = addDays(w, -7) >= weekOf(S.created) ? weekScore(addDays(w, -7)) : null;
@@ -1108,7 +1300,7 @@ async function drawShare(w) {
   const gold = '#f2b544', ink = '#11131a', fg = '#eceae3', mut = '#9097a9', line = '#2d3245', red = '#ff6f6f', green = '#5dd3a2';
   x.fillStyle = ink; x.fillRect(0, 0, W, H);
   const D = '"Unbounded", "Golos Text", system-ui, sans-serif', B = '"Golos Text", system-ui, sans-serif';
-  x.fillStyle = mut; x.font = `600 34px ${B}`; x.fillText(`НЕДЕЛЯ ${isoWeekNo(w)} · ${fmtWeek(w).toUpperCase()}`, 90, 150);
+  x.fillStyle = mut; x.font = `600 34px ${B}`; x.fillText(`${S.profile.name ? S.profile.name.toUpperCase() + ' · ' : ''}НЕДЕЛЯ ${isoWeekNo(w)} · ${fmtWeek(w).toUpperCase()}`, 90, 150);
   const cx = 300, cy = 470, r = 190;
   x.lineCap = 'round'; x.lineWidth = 34;
   x.strokeStyle = line; x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.stroke();
@@ -1132,7 +1324,7 @@ async function drawShare(w) {
   x.fillStyle = gold; roundRect(x, 90, 1210, 64, 64, 18); x.fill();
   x.strokeStyle = ink; x.lineWidth = 7; x.lineJoin = 'round'; x.beginPath(); x.moveTo(104, 1258); x.lineTo(114, 1258); x.lineTo(114, 1246); x.lineTo(124, 1246); x.lineTo(124, 1234); x.lineTo(134, 1234); x.lineTo(134, 1224); x.lineTo(142, 1224); x.stroke();
   x.fillStyle = fg; x.font = `700 36px ${D}`; x.fillText('Точка сохранения', 176, 1254);
-  const text = `Неделя ${isoWeekNo(w)}: ${sc.total}/100 · ${rankOf(sc.total)}${delta !== null ? ` · ${delta >= 0 ? '+' : '−'}${Math.abs(delta)}` : ''} · серия ${si.streak} · уровень ${lv} · проверено ${sc.verified}/${sc.marks}${sc.flagged ? ' · ⚠' : ''}`;
+  const text = `${S.profile.name ? S.profile.name + ', н' : 'Н'}еделя ${isoWeekNo(w)}: ${sc.total}/100 · ${rankOf(sc.total)}${delta !== null ? ` · ${delta >= 0 ? '+' : '−'}${Math.abs(delta)}` : ''} · серия ${si.streak} · уровень ${lv} · проверено ${sc.verified}/${sc.marks}${sc.flagged ? ' · ⚠' : ''}`;
   return new Promise(res => c.toBlob(b => res({ blob: b, url: URL.createObjectURL(b), text }), 'image/png'));
 }
 function roundRect(x, X, Y, w, h, r) { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); }
@@ -1199,9 +1391,10 @@ document.addEventListener('click', async e => {
   if (a === 'import') return doImport();
   if (a === 'guide-next') {
     ui.guide = (ui.guide ?? 0) + 1;
-    if (ui.guide >= GUIDE.length) { ui.guide = S ? null : GUIDE.length; if (S) { S.guide = true; save(); } }
+    if (ui.guide >= GUIDE.length) { ui.guide = null; if (S) { S.guide = true; save(); } else ui.wiz = newWiz(); }
     window.scrollTo(0, 0); render(); return;
   }
+  if (a.startsWith('wz-') && ui.wiz) { wizAction(a, el); return; }
   if (a === 'guide-back') { ui.guide = Math.max(0, (ui.guide ?? 0) - 1); window.scrollTo(0, 0); render(); return; }
   if (!S) return;
   const t = todayKey(), px = xpAll().total, pc = coins();
@@ -1210,6 +1403,7 @@ document.addEventListener('click', async e => {
     case 'tab': ui.tab = el.dataset.t; ui.week = null; ui.confirmReset = false; ui.confirmDrop = null; window.scrollTo(0, 0); render(); return;
     case 'go-shop': ui.tab = 'me'; render(); document.getElementById('shop')?.scrollIntoView({ block: 'start' }); return;
     case 'guide-open': ui.guide = 0; window.scrollTo(0, 0); render(); return;
+    case 'wiz-open': ui.wiz = editWiz(); window.scrollTo(0, 0); render(); return;
     case 'locked': toast(el.dataset.why || 'Сейчас отметить нельзя'); return;
     case 'toggle': {
       const id = el.dataset.id, q = Q[id], win = windowFor(q, t);
@@ -1331,14 +1525,40 @@ document.addEventListener('click', async e => {
       save(); openIcs(ids); return;
     }
     case 'ics-share': try { await navigator.share({ files: [ui.sheet.file] }); } catch (err) { if (err?.name !== 'AbortError') toast('Не получилось. Создай напоминание вручную'); } return;
-    case 'pay': {
-      const n = Math.round(Number(val('pay'))); if (!(n > 0)) { toast('Введи сумму больше нуля'); return; }
-      S.boss.paid.push({ day: t, amount: n }); afterChange(px, pc);
-      if (!bossLeft()) setTimeout(() => toast('Босс побеждён. Кредитка закрыта!', true), 1500);
+    case 'boss-hit': {
+      const b = S.bosses.find(x => x.id === el.dataset.id), T = BT[b.type], v = num(val('bh-' + b.id));
+      if (!(v > 0)) { toast('Введи число больше нуля'); return; }
+      if (T.mode === 'sum') b.hits.push({ day: t, amount: v, ts: Date.now() });
+      else { b.hits = b.hits.filter(h => h.day !== t); b.hits.push({ day: t, value: v, ts: Date.now() }); }
+      const won = checkBossKill(b, t); afterChange(px, pc);
+      if (won) setTimeout(() => toast(`Босс «${b.name}» побеждён! +500 опыта`, true), 1200);
       return;
     }
-    case 'undo-pay': S.boss.paid.pop(); save(); render(); toast('Последний платёж отменён'); return;
+    case 'boss-clean': {
+      const b = S.bosses.find(x => x.id === el.dataset.id);
+      b.hits = b.hits.filter(h => h.day !== t); b.hits.push({ day: t, clean: el.dataset.v === '1', ts: Date.now() });
+      const won = checkBossKill(b, t); afterChange(px, pc);
+      if (el.dataset.v === '0') toast('Записал. Срыв — это просто день. Завтра снова бьём');
+      if (won) setTimeout(() => toast(`Босс «${b.name}» побеждён! +500 опыта`, true), 1200);
+      return;
+    }
+    case 'boss-undo': {
+      const b = S.bosses.find(x => x.id === el.dataset.id); b.hits.pop();
+      if (b.defeated) { b.defeated = null; S.events = S.events.filter(e => !(e.type === 'bosskill' && e.id === b.id)); }
+      save(); render(); toast('Отменено'); return;
+    }
+    case 'boss-del': ui.bossDel = el.dataset.id; render(); return;
+    case 'boss-del-no': ui.bossDel = null; render(); return;
+    case 'boss-del-yes': S.bosses = S.bosses.filter(b => b.id !== el.dataset.id); S.events = S.events.filter(e => e.id !== el.dataset.id); ui.bossDel = null; save(); render(); toast('Босс удалён'); return;
+    case 'boss-new': ui.sheet = { type: 'boss', d: null }; render(); return;
+    case 'boss-pick': ui.sheet = { type: 'boss', d: { type: el.dataset.t } }; render(); return;
+    case 'boss-save': {
+      const d = ui.sheet.d, err = bossProblem(d); if (err) { toast(err); return; }
+      if (activeBosses().length >= BOSS_LIMIT) { toast(`Больше ${BOSS_LIMIT} боссов одновременно нельзя`); return; }
+      S.bosses.push(makeBoss(d, t)); ui.sheet = null; save(); render(); toast('Босс появился. В бой', true); return;
+    }
     case 'side': (S.side[el.dataset.id] ||= []).push(t); afterChange(px, pc); return;
+    case 'side-add': S.sideList.push(el.dataset.id); save(); render(); toast('Добавлено в сайд-квесты'); return;
     case 'side-undo': (S.side[el.dataset.id] || []).pop(); save(); render(); return;
     case 'add-custom': {
       const title = val('c-title').trim(); if (!title) { toast('Напиши название квеста'); return; }
@@ -1369,7 +1589,6 @@ document.addEventListener('click', async e => {
     case 'theme': S.settings.theme = el.dataset.v; save(); render(); return;
     case 'save-settings': {
       const wv = val('s-wake'), bv = val('s-bed'); if (wv) S.settings.wake = wv; if (bv) S.settings.bed = bv;
-      S.boss.total = Math.max(0, Math.round(Number(val('s-debt')) || 0)); S.boss.weekly = Math.max(0, Math.round(Number(val('s-weekly')) || 0));
       save(); render(); toast('Настройки сохранены'); return;
     }
     case 'share': {
@@ -1381,17 +1600,43 @@ document.addEventListener('click', async e => {
     case 'share-send': try { await navigator.share({ files: [ui.sheet.file], text: ui.sheet.text }); } catch (err) { if (err && err.name !== 'AbortError') toast('Не получилось открыть меню. Зажми картинку'); } return;
     case 'share-copy': copyText(ui.sheet.text); return;
     case 'export': { const file = new File([JSON.stringify(S)], `savepoint-${t}.json`, { type: 'application/json' }); ui.sheet = { type: 'export', file, canShare: !!(navigator.canShare && navigator.canShare({ files: [file] })) }; render(); return; }
-    case 'export-share': try { await navigator.share({ files: [ui.sheet.file] }); } catch (err) { if (err?.name !== 'AbortError') toast('Не получилось. Скопируй текстом'); } return;
-    case 'export-copy': { const ta = document.getElementById('exp-text'); if (!(await copyText(ta.value))) { ta.focus(); ta.select(); } return; }
+    case 'export-share': try { await navigator.share({ files: [ui.sheet.file] }); S.lastBackup = t; save(); } catch (err) { if (err?.name !== 'AbortError') toast('Не получилось. Скопируй текстом'); } return;
+    case 'export-copy': { const ta = document.getElementById('exp-text'); if (!(await copyText(ta.value))) { ta.focus(); ta.select(); } S.lastBackup = t; save(); return; }
+    case 'backup-later': S.lastBackup = addDays(t, -6); save(); render(); return;
     case 'reset-ask': ui.confirmReset = true; render(); return;
     case 'reset-no': ui.confirmReset = false; render(); return;
-    case 'reset-yes': try { localStorage.removeItem(STORE_KEY); } catch (err) { /* */ } S = null; ui = { tab: 'today', week: null, sheet: null, guide: 0, journalN: 14 }; render(); return;
+    case 'reset-yes': try { localStorage.removeItem(STORE_KEY); } catch (err) { /* */ } S = null; ui = { tab: 'today', week: null, sheet: null, guide: 0, wiz: null, journalN: 14 }; render(); return;
   }
 });
+document.addEventListener('change', e => { const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; } const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value; const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value); });
 document.addEventListener('input', e => {
+  const wf = e.target.dataset?.wf; if (wf) wizSet(wf, e.target.value);
+  const wbk = e.target.dataset?.wbk; if (wbk && ui.wiz) { const i = Number(e.target.closest('[data-bi]').dataset.bi); ui.wiz.d.bosses[i][wbk] = e.target.value; }
+  const bf = e.target.dataset?.bf; if (bf && ui.sheet?.d) ui.sheet.d[bf] = e.target.value;
   if (e.target.id === 'note') ui.noteDraft = e.target.value;
   if (e.target.id === 'txt') { if (ui.sheet) ui.sheet.draft = e.target.value; const n = document.getElementById('txt-n'); if (n) n.textContent = e.target.value.trim().length; }
 });
+
+function wizAction(a, el) {
+  const w = ui.wiz, d = w.d;
+  const re = () => render();
+  switch (a) {
+    case 'wz-next': { const err = wizProblem(); if (err) { toast(err); return; } if (w.step === WIZ.length - 1) { wizApply(); return; } w.step++; window.scrollTo(0, 0); return re(); }
+    case 'wz-back': w.step = Math.max(0, w.step - 1); window.scrollTo(0, 0); return re();
+    case 'wz-cancel': ui.wiz = null; if (S && !S.profileDone) { S.profileDone = true; save(); } return re();
+    case 'wz-q': { const id = el.dataset.id; if (d.quests.includes(id)) d.quests = d.quests.filter(x => x !== id); else { if (d.quests.length >= wizQuestLimit()) { toast(`Максимум ${wizQuestLimit()}. Сними другой квест`); return; } d.quests.push(id); } return re(); }
+    case 'wz-keep': { const id = el.dataset.id; d.keep = d.keep.includes(id) ? d.keep.filter(x => x !== id) : d.keep.concat(id); return re(); }
+    case 'wz-badd': if (d.keep.length + d.bosses.length >= BOSS_LIMIT) { toast(`Максимум ${BOSS_LIMIT} босса`); return; } d.bosses.push({ type: el.dataset.t }); return re();
+    case 'wz-bdel': d.bosses.splice(Number(el.dataset.i), 1); return re();
+    case 'wz-side': { const id = el.dataset.id; d.side = d.side.includes(id) ? d.side.filter(x => x !== id) : d.side.concat(id); return re(); }
+    case 'wz-cadd': { const title = val('wz-ctitle').trim(); if (!title) { toast('Напиши, что за дело'); return; } d.custom.push({ id: 'c' + Date.now(), title, stat: 'mind', xp: 100 }); return re(); }
+    case 'wz-cdel': d.custom.splice(Number(el.dataset.i), 1); return re();
+    case 'wz-rw': { const r = d.rewards[Number(el.dataset.i)]; r.on = !r.on; return re(); }
+    case 'wz-radd': { const title = val('wz-rtitle').trim(), price = Math.max(10, Math.round(num(val('wz-rprice')) || 200)); if (!title) { toast('Напиши, что за награда'); return; } d.rewards.push({ id: 'r' + Date.now(), title, price, on: true }); return re(); }
+    case 'wz-tone': d.tone = el.dataset.v; return re();
+    case 'wz-theme': d.theme = el.dataset.v; document.documentElement.toggleAttribute('data-theme', d.theme !== 'auto'); if (d.theme !== 'auto') document.documentElement.setAttribute('data-theme', d.theme); return re();
+  }
+}
 
 async function doImport() {
   let text = val('imp-text').trim();
@@ -1400,7 +1645,7 @@ async function doImport() {
   try {
     const data = JSON.parse(text);
     if (!data || !data.created || !data.days) throw new Error('bad');
-    S = migrate(data); S.guide = true; S.seenVersion = APP_VERSION; save(); ui.sheet = null; ui.tab = 'today'; ui.guide = null; render(); toast('Прогресс восстановлен', true);
+    S = migrate(data); S.guide = true; S.seenVersion = APP_VERSION; save(); ui.sheet = null; ui.tab = 'today'; ui.guide = null; ui.wiz = S.profileDone ? null : editWiz(); render(); toast('Прогресс восстановлен', true);
   } catch (err) { toast('Это не похоже на копию из приложения. Проверь текст'); }
 }
 
@@ -1410,6 +1655,7 @@ S = load();
 if (S) {
   if (!S.guide) ui.guide = 0;            // обновились с первой версии — показываем гайд один раз
   if (S.seenVersion !== APP_VERSION) ui.sheet = { type: 'whatsnew', from: S.seenVersion || '1.0.0' };
+  if (!S.profileDone) ui.wiz = editWiz();
   const notes = evolve(); const got = checkAch(); save(); render();
   [...notes, ...(got.length ? [got.length === 1 ? `Ачивка: ${got[0].title}` : `Новые ачивки: ${got.map(a => a.title).join(', ')}`] : [])].forEach((n, i) => setTimeout(() => toast(n, true), 500 + i * 800));
 } else { ui.guide = 0; render(); }

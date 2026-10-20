@@ -384,7 +384,6 @@ details summary { cursor: pointer; }
 
 /* Карта дня */
 .dcard {
-  --c: var(--accent);
   position: relative; border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
   background: var(--surface); border: 1px solid var(--line); overflow: hidden;
 }
@@ -460,3 +459,25 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 .cell.ns { box-shadow: inset 0 0 0 2px var(--danger); }
 .grid7 .nm { font-size: .78rem; }
 @media (max-width: 360px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .achs { grid-template-columns: 1fr; } }
+
+/* ================= v2.1: боссы и анкета ================= */
+.boss .chip { align-self: center; }
+.boss .hp > i { background: var(--danger); }
+.boss.won { border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.btypes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.btype {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; min-width: 0;
+  padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2);
+}
+.btype b { font-weight: 700; color: var(--c); }
+.btype .small { font-size: .74rem; line-height: 1.3; }
+.btype:active { transform: scale(.98); }
+.bform { display: flex; flex-direction: column; gap: 10px; }
+.card.wb { background: var(--surface-2); padding: 14px; }
+.card.wb input, .card.wb select { background: var(--surface); }
+.wiz .chips { gap: 6px; }
+.wiz .cat-head { padding-top: 6px; }
+.wiz-nav { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); padding-top: 6px; }
+.wiz-nav .btn { box-shadow: var(--shadow); }
+.wiz .side { padding: 10px 0; }
+@media (max-width: 360px) { .btypes { grid-template-columns: 1fr; } }
