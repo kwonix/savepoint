@@ -562,3 +562,14 @@ textarea.plain { font-family: var(--f-body); font-size: 16px; min-height: 130px;
 
 .chart text.yl { text-anchor: start; }
 .card .tiles .tile { background: var(--surface-2); }
+
+/* ================= 2.2.1: выравнивание ================= */
+/* Поля в две колонки выравниваются по нижнему краю, даже если подпись в две строки */
+.grid2 { align-items: end; }
+/* Кнопки-варианты: одинаковое скругление для одной и двух строк */
+.pill { border-radius: 14px; }
+/* Фраза дня всегда занимает место под две строки и не двигает экран */
+.quote { min-height: calc(1.4em * 2); display: flex; align-items: center; }
+/* Окно снизу продолжается цветом окна под домашней полоской, без тёмной полосы */
+.sheet { box-shadow: 0 140px 0 0 var(--surface); }
+.sheet-bg { bottom: -1px; }
