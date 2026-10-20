@@ -1573,6 +1573,17 @@ function viewSheet() {
 }
 
 function render() {
+  // Перерисовка того же экрана не должна прокручивать его наверх.
+  // Переход на другой шаг или вкладку сбрасывает прокрутку сам (scrollTo до render или новый шаг).
+  const viewKey = ui.guide !== null && ui.guide < GUIDE.length ? 'g' + ui.guide : ui.wiz ? 'w' + ui.wiz.step : 'app';
+  const innerTop = viewKey === ui.lastView ? document.querySelector('.pager-scroll')?.scrollTop || 0 : 0;
+  const winY = window.scrollY;
+  ui.lastView = viewKey;
+  renderInner();
+  const ps = document.querySelector('.pager-scroll'); if (ps && innerTop) ps.scrollTop = innerTop;
+  if (!document.body.classList.contains('locked') && Math.abs(window.scrollY - winY) > 1) window.scrollTo(0, winY);
+}
+function renderInner() {
   applyTheme();
   const root = document.getElementById('app');
   const tabbar = document.getElementById('tabbar');
